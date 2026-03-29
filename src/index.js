@@ -3,7 +3,7 @@ const express    = require('express');
 const cors       = require('cors');
 const rateLimit  = require('express-rate-limit');
 
-const app = express();
+const app = express();app.set('trust proxy', 1);
 
 // ─── Middleware ───────────────────────────────────────────
 app.use(cors({
