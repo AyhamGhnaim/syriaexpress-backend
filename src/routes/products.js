@@ -113,7 +113,7 @@ router.post('/', auth(['seller']), async (req, res) => {
   try {
     const {
       category_id, name_ar, name_en, description_ar, description_en,
-      min_order_quantity, unit,
+  min_order_quantity, unit, price,
       ship_inside, ship_outside, ship_international,
       ship_price_inside, ship_price_outside, ship_price_intl
     } = req.body;
@@ -123,16 +123,18 @@ router.post('/', auth(['seller']), async (req, res) => {
     if (!seller.rows.length) return res.status(403).json({ error: 'لست بائعاً معتمداً' });
 
     const result = await db.query(
-      `INSERT INTO products
-       (seller_id, category_id, name_ar, name_en, description_ar, description_en,
-        min_order_quantity, unit, ship_inside, ship_outside, ship_international,
-        ship_price_inside, ship_price_outside, ship_price_intl, status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'draft')
-       RETURNING *`,
-      [seller.rows[0].id, category_id, name_ar, name_en, description_ar, description_en,
-       min_order_quantity || 1, unit || 'كرتون',
-       ship_inside || true, ship_outside || false, ship_international || false,
-       ship_price_inside, ship_price_outside, ship_price_intl]
+ const result = await db.query(
+  `INSERT INTO products
+  (seller_id, category_id, name_ar, name_en, description_ar, description_en,
+  min_order_quantity, unit, price, ship_inside, ship_outside, ship_international,
+  ship_price_inside, ship_price_outside, ship_price_intl, status)
+  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'active')
+  RETURNING *`,
+  [seller.rows[0].id, category_id, name_ar, name_en, description_ar, description_en,
+  min_order_quantity || 1, unit || 'كرتون', price || 0, ship_inside || true,
+  ship_outside || false, ship_international || false,
+  ship_price_inside, ship_price_outside, ship_price_intl]
+);
     );
 
     res.status(201).json({ message: 'تم إضافة المنتج كمسودة', product: result.rows[0] });
