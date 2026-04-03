@@ -85,7 +85,19 @@ router.get('/me/dashboard', auth(['seller']), async (req, res) => {
     res.status(500).json({ error: 'خطأ في الخادم' });
   }
 });
-
+// GET /api/sellers/me — get my profile
+router.get('/me', auth(['seller']), async (req, res) => {
+  try {
+    const result = await db.query(
+      'SELECT * FROM sellers WHERE user_id = $1',
+      [req.user.id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'لم يُوجد' });
+    res.json({ seller: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
 // PUT /api/sellers/me — update seller profile
 router.put('/me', auth(['seller']), async (req, res) => {
   try {
