@@ -4,7 +4,6 @@ const db      = require('../config/db');
 const auth    = require('../middleware/auth');
 
 // ─── GET all active products ─────────────────────────────
-// GET /api/products?category=food&governorate=دمشق&shipping=inside&page=1
 router.get('/', async (req, res) => {
   try {
     const { category, governorate, shipping, search, page = 1, limit = 20 } = req.query;
@@ -40,7 +39,6 @@ router.get('/', async (req, res) => {
 
     const result = await db.query(query, params);
 
-    // Count total
     const countResult = await db.query(
       `SELECT COUNT(*) FROM v_products_full ${whereClause}`,
       params.slice(0, -2)
@@ -60,7 +58,6 @@ router.get('/', async (req, res) => {
 });
 
 // ─── GET single product ──────────────────────────────────
-// GET /api/products/:id
 router.get('/:id', async (req, res) => {
   try {
     const result = await db.query(
@@ -79,13 +76,11 @@ router.get('/:id', async (req, res) => {
     if (result.rows.length === 0)
       return res.status(404).json({ error: 'المنتج غير موجود' });
 
-    // Get images
     const images = await db.query(
       'SELECT * FROM product_images WHERE product_id = $1 ORDER BY is_primary DESC, sort_order',
       [req.params.id]
     );
 
-    // Get reviews
     const reviews = await db.query(
       `SELECT r.*, u.name as buyer_name
        FROM reviews r JOIN users u ON r.buyer_id = u.id
@@ -93,7 +88,6 @@ router.get('/:id', async (req, res) => {
       [result.rows[0].seller_id]
     );
 
-    // Increment views
     await db.query('UPDATE products SET views_count = views_count + 1 WHERE id = $1', [req.params.id]);
 
     res.json({
@@ -108,36 +102,32 @@ router.get('/:id', async (req, res) => {
 });
 
 // ─── CREATE product (seller only) ───────────────────────
-// POST /api/products
 router.post('/', auth(['seller']), async (req, res) => {
   try {
     const {
       category_id, name_ar, name_en, description_ar, description_en,
-  min_order_quantity, unit, price,
+      min_order_quantity, unit, price,
       ship_inside, ship_outside, ship_international,
       ship_price_inside, ship_price_outside, ship_price_intl
     } = req.body;
 
-    // Get seller_id from user
     const seller = await db.query('SELECT id FROM sellers WHERE user_id = $1', [req.user.id]);
     if (!seller.rows.length) return res.status(403).json({ error: 'لست بائعاً معتمداً' });
 
     const result = await db.query(
- const result = await db.query(
-  `INSERT INTO products
-  (seller_id, category_id, name_ar, name_en, description_ar, description_en,
-  min_order_quantity, unit, price, ship_inside, ship_outside, ship_international,
-  ship_price_inside, ship_price_outside, ship_price_intl, status)
-  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'active')
-  RETURNING *`,
-  [seller.rows[0].id, category_id, name_ar, name_en, description_ar, description_en,
-  min_order_quantity || 1, unit || 'كرتون', price || 0, ship_inside || true,
-  ship_outside || false, ship_international || false,
-  ship_price_inside, ship_price_outside, ship_price_intl]
-);
+      `INSERT INTO products
+      (seller_id, category_id, name_ar, name_en, description_ar, description_en,
+      min_order_quantity, unit, price, ship_inside, ship_outside, ship_international,
+      ship_price_inside, ship_price_outside, ship_price_intl, status)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'active')
+      RETURNING *`,
+      [seller.rows[0].id, category_id, name_ar, name_en, description_ar, description_en,
+      min_order_quantity || 1, unit || 'كرتون', price || 0,
+      ship_inside || true, ship_outside || false, ship_international || false,
+      ship_price_inside, ship_price_outside, ship_price_intl]
     );
 
-    res.status(201).json({ message: 'تم إضافة المنتج كمسودة', product: result.rows[0] });
+    res.status(201).json({ message: 'تم إضافة المنتج', product: result.rows[0] });
 
   } catch (err) {
     console.error(err);
@@ -146,7 +136,6 @@ router.post('/', auth(['seller']), async (req, res) => {
 });
 
 // ─── UPDATE product ──────────────────────────────────────
-// PUT /api/products/:id
 router.put('/:id', auth(['seller']), async (req, res) => {
   try {
     const seller = await db.query('SELECT id FROM sellers WHERE user_id = $1', [req.user.id]);
