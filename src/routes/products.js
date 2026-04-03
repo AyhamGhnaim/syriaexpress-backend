@@ -104,12 +104,14 @@ router.get('/:id', async (req, res) => {
 // ─── CREATE product (seller only) ───────────────────────
 router.post('/', auth(['seller']), async (req, res) => {
   try {
-    const {
-      category_id, name_ar, name_en, description_ar, description_en,
-      min_order_quantity, unit, price,
-      ship_inside, ship_outside, ship_international,
-      ship_price_inside, ship_price_outside, ship_price_intl
-    } = req.body;
+   const {
+  category_id, name_ar, name_en,
+  description_ar = req.body.description || null,
+  description_en,
+  min_order_quantity, unit, price,
+  ship_inside, ship_outside, ship_international,
+  ship_price_inside, ship_price_outside, ship_price_intl
+} = req.body;
 
     const seller = await db.query('SELECT id FROM sellers WHERE user_id = $1', [req.user.id]);
     if (!seller.rows.length) return res.status(403).json({ error: 'لست بائعاً معتمداً' });
@@ -122,7 +124,7 @@ router.post('/', auth(['seller']), async (req, res) => {
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'active')
       RETURNING *`,
       [seller.rows[0].id, category_id, name_ar, name_en, description_ar, description_en,
-      min_order_quantity || 1, unit || 'كرتون', price || 0,
+     min_order_quantity || 1, unit || 'كرتون', parseFloat(price) || 0,
       ship_inside || true, ship_outside || false, ship_international || false,
       ship_price_inside, ship_price_outside, ship_price_intl]
     );
