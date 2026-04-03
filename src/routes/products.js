@@ -56,7 +56,25 @@ router.get('/', async (req, res) => {
     res.status(500).json({ error: 'خطأ في الخادم' });
   }
 });
-
+// —— GET my products (seller only) ——
+router.get('/my', auth(['seller']), async (req, res) => {
+  try {
+    const seller = await db.query('SELECT id FROM sellers WHERE user_id = $1', [req.user.id]);
+    if (!seller.rows.length) return res.status(403).json({ error: 'لست بائعاً' });
+    const result = await db.query(
+      `SELECT p.*, c.name_ar as category_name_ar 
+       FROM products p 
+       LEFT JOIN categories c ON p.category_id = c.id
+       WHERE p.seller_id = $1 AND p.status != 'archived'
+       ORDER BY p.created_at DESC`,
+      [seller.rows[0].id]
+    );
+    res.json({ products: result.rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
 // ─── GET single product ──────────────────────────────────
 router.get('/:id', async (req, res) => {
   try {
