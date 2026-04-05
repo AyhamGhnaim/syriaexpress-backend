@@ -2,7 +2,10 @@ const express = require('express');
 const router  = express.Router();
 const db      = require('../config/db');
 const auth    = require('../middleware/auth');
-
+const multer = require('multer');
+const cloudinary = require('../config/cloudinary');
+const storage = multer.memoryStorage();
+const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } });
 // ─── GET all active products ─────────────────────────────
 router.get('/', async (req, res) => {
   try {
@@ -203,5 +206,21 @@ router.delete('/:id', auth(['seller','admin']), async (req, res) => {
     res.status(500).json({ error: 'خطأ في الخادم' });
   }
 });
-
+// POST /api/products/:id/image
+router.post('/:id/image', auth(['seller']), upload.single('image'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'لم يتم رفع صورة' });
+    const result = await new Promise((resolve, reject) => {
+      cloudinary.uploader.upload_stream(
+        { folder: 'syriaexpress/products' },
+        (error, result) => { if (error) reject(error); else resolve(result); }
+      ).end(req.file.buffer);
+    });
+    await db.query('UPDATE products SET image_url = $1 WHERE id = $2', [result.secure_url, req.params.id]);
+    res.json({ image_url: result.secure_url });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'فشل رفع الصورة' });
+  }
+});
 module.exports = router;
