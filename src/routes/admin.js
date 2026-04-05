@@ -220,5 +220,16 @@ router.patch('/categories/:id', async (req, res) => {
     res.status(500).json({ error: 'خطأ في الخادم' });
   }
 });
-
+// GET /api/admin/sellers/:id/documents
+router.get('/sellers/:id/documents', async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT * FROM seller_documents WHERE seller_id = $1 ORDER BY created_at DESC`,
+      [req.params.id]
+    );
+    res.json({ documents: result.rows });
+  } catch (err) {
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
 module.exports = router;
