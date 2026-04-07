@@ -80,12 +80,12 @@ router.get('/me', auth(['seller']), async (req, res) => {
 // PUT /api/sellers/me — update seller profile
 router.put('/me', auth(['seller']), async (req, res) => {
   try {
-    const { company_name_ar, company_name_en, activity_type, governorate, address, description } = req.body;
+    const { company_name_ar, company_name_en, activity_type, governorate, address, description, established_year, phone } = req.body;
     const result = await db.query(
       `UPDATE sellers SET company_name_ar=$1, company_name_en=$2, activity_type=$3,
-       governorate=$4, address=$5, description=$6
-       WHERE user_id=$7 RETURNING *`,
-      [company_name_ar, company_name_en, activity_type, governorate, address, description, req.user.id]
+       governorate=$4, address=$5, description=$6, established_year=$7, phone=$8
+       WHERE user_id=$9 RETURNING *`,
+      [company_name_ar, company_name_en, activity_type, governorate, address, description, established_year || null, phone || null, req.user.id]
     );
     res.json({ message: 'تم تحديث الملف', seller: result.rows[0] });
   } catch (err) {
