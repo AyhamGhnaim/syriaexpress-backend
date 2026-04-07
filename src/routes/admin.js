@@ -238,7 +238,7 @@ router.patch('/categories/:id', async (req, res) => {
 router.get('/sellers/:id/documents', async (req, res) => {
   try {
     const result = await db.query(
-      `SELECT * FROM seller_documents WHERE seller_id = $1 ORDER BY created_at DESC`,
+      `SELECT * FROM seller_documents WHERE seller_id = $1 ORDER BY uploaded_at DESC`,
       [req.params.id]
     );
     res.json({ documents: result.rows });
