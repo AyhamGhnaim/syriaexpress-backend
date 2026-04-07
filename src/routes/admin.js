@@ -137,6 +137,20 @@ router.get('/users', async (req, res) => {
   }
 });
 
+// ─── Change user type ────────────────────────────────────
+// PATCH /api/admin/users/:id
+router.patch('/users/:id', async (req, res) => {
+  try {
+    const { user_type } = req.body;
+    if (!['buyer','seller','admin'].includes(user_type))
+      return res.status(400).json({ error: 'نوع مستخدم غير صحيح' });
+    await db.query('UPDATE users SET user_type=$1 WHERE id=$2', [user_type, req.params.id]);
+    res.json({ message: 'تم تغيير نوع المستخدم' });
+  } catch (err) {
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
 // ─── Suspend / Activate user ─────────────────────────────
 router.patch('/users/:id/status', async (req, res) => {
   try {
