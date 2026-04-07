@@ -31,29 +31,6 @@ router.get('/', async (req, res) => {
   }
 });
 
-// GET /api/sellers/:id — seller details
-router.get('/:id', async (req, res) => {
-  try {
-    const seller = await db.query(
-      `SELECT s.*, vs.total_orders, vs.completed_orders, vs.avg_rating,
-              vs.unique_buyers, vs.active_products
-       FROM sellers s
-       LEFT JOIN v_seller_stats vs ON vs.seller_id = s.id
-       WHERE s.id = $1 AND s.verification_status = 'verified'`,
-      [req.params.id]
-    );
-    if (!seller.rows.length) return res.status(404).json({ error: 'البائع غير موجود' });
-
-    const products = await db.query(
-      'SELECT * FROM v_products_full WHERE seller_id = $1 LIMIT 10',
-      [req.params.id]
-    );
-
-    res.json({ ...seller.rows[0], products: products.rows });
-  } catch (err) {
-    res.status(500).json({ error: 'خطأ في الخادم' });
-  }
-});
 
 // GET /api/sellers/me/dashboard — seller dashboard stats
 router.get('/me/dashboard', auth(['seller']), async (req, res) => {
@@ -85,6 +62,7 @@ router.get('/me/dashboard', auth(['seller']), async (req, res) => {
     res.status(500).json({ error: 'خطأ في الخادم' });
   }
 });
+
 // GET /api/sellers/me — get my profile
 router.get('/me', auth(['seller']), async (req, res) => {
   try {
@@ -98,6 +76,7 @@ router.get('/me', auth(['seller']), async (req, res) => {
     res.status(500).json({ error: 'خطأ في الخادم' });
   }
 });
+
 // PUT /api/sellers/me — update seller profile
 router.put('/me', auth(['seller']), async (req, res) => {
   try {
@@ -113,5 +92,70 @@ router.put('/me', auth(['seller']), async (req, res) => {
     res.status(500).json({ error: 'خطأ في الخادم' });
   }
 });
+
+
+// POST /api/sellers/documents — upload seller document
+const multer = require('multer');
+const cloudinary = require('../config/cloudinary');
+const upload = multer({ storage: multer.memoryStorage() });
+
+router.post('/documents', auth(['seller']), upload.single('document'), async (req, res) => {
+  try {
+    const seller = await db.query('SELECT id FROM sellers WHERE user_id = $1', [req.user.id]);
+    if (!seller.rows.length) return res.status(403).json({ error: 'غير مصرح' });
+    const sellerId = seller.rows[0].id;
+
+    if (!req.file) return res.status(400).json({ error: 'لم يتم رفع أي ملف' });
+
+    // رفع لـ Cloudinary
+    const uploadResult = await new Promise((resolve, reject) => {
+      const stream = cloudinary.uploader.upload_stream(
+        { folder: 'seller_documents', resource_type: 'auto' },
+        (error, result) => { if (error) reject(error); else resolve(result); }
+      );
+      stream.end(req.file.buffer);
+    });
+
+    const docType = req.body.doc_type || 'document';
+    const docName = req.file.originalname || docType;
+
+    await db.query(
+      `INSERT INTO seller_documents (seller_id, doc_type, doc_name, file_url)
+       VALUES ($1, $2, $3, $4)`,
+      [sellerId, docType, docName, uploadResult.secure_url]
+    );
+
+    res.json({ message: 'تم رفع الوثيقة', url: uploadResult.secure_url });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'خطأ في رفع الوثيقة' });
+  }
+});
+
+// GET /api/sellers/:id — seller details
+router.get('/:id', async (req, res) => {
+  try {
+    const seller = await db.query(
+      `SELECT s.*, vs.total_orders, vs.completed_orders, vs.avg_rating,
+              vs.unique_buyers, vs.active_products
+       FROM sellers s
+       LEFT JOIN v_seller_stats vs ON vs.seller_id = s.id
+       WHERE s.id = $1 AND s.verification_status = 'verified'`,
+      [req.params.id]
+    );
+    if (!seller.rows.length) return res.status(404).json({ error: 'البائع غير موجود' });
+
+    const products = await db.query(
+      'SELECT * FROM v_products_full WHERE seller_id = $1 LIMIT 10',
+      [req.params.id]
+    );
+
+    res.json({ ...seller.rows[0], products: products.rows });
+  } catch (err) {
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
+
 
 module.exports = router;
