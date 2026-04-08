@@ -7,11 +7,12 @@ const db      = require('../config/db');
 // ─── Register ───────────────────────────────────────────
 // POST /api/auth/register
 router.post('/register', async (req, res) => {
-  const { name, email, phone, password, user_type, governorate } = req.body;
+  const { name, phone, password, user_type, governorate } = req.body;
+  const email = (req.body.email || '').trim().toLowerCase();
 
   try {
     // Check email exists
-    const exists = await db.query('SELECT id FROM users WHERE email = $1', [email]);
+    const exists = await db.query('SELECT id FROM users WHERE LOWER(email) = $1', [email]);
     if (exists.rows.length > 0)
       return res.status(400).json({ error: 'البريد الإلكتروني مسجّل مسبقاً' });
 
@@ -63,11 +64,12 @@ router.post('/register', async (req, res) => {
 // ─── Login ───────────────────────────────────────────────
 // POST /api/auth/login
 router.post('/login', async (req, res) => {
-  const { email, password } = req.body;
+  const email = (req.body.email || '').trim().toLowerCase();
+  const { password } = req.body;
 
   try {
     const result = await db.query(
-      'SELECT * FROM users WHERE email = $1 AND is_active = true',
+      'SELECT * FROM users WHERE LOWER(email) = $1 AND is_active = true',
       [email]
     );
 
@@ -127,6 +129,51 @@ router.get('/me', auth(), async (req, res) => {
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
+// ─── Change Password ─────────────────────────────────────
+// PUT /api/auth/change-password
+router.put('/change-password', auth(), async (req, res) => {
+  try {
+    const { current_password, new_password } = req.body;
+
+    if (!current_password || !new_password) {
+      return res.status(400).json({ error: 'يرجى إدخال كلمة المرور الحالية والجديدة' });
+    }
+
+    if (new_password.length < 6) {
+      return res.status(400).json({ error: 'كلمة المرور الجديدة يجب أن تكون 6 أحرف على الأقل' });
+    }
+
+    // جلب كلمة المرور الحالية من الداتابيز
+    const { rows } = await db.query(
+      'SELECT password_hash FROM users WHERE id = $1',
+      [req.user.id]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'المستخدم غير موجود' });
+    }
+
+    // التحقق من كلمة المرور الحالية
+    const isMatch = await bcrypt.compare(current_password, rows[0].password_hash);
+    if (!isMatch) {
+      return res.status(400).json({ error: 'كلمة المرور الحالية غير صحيحة' });
+    }
+
+    // تشفير كلمة المرور الجديدة وتحديثها
+    const newHash = await bcrypt.hash(new_password, 12);
+    await db.query(
+      'UPDATE users SET password_hash = $1 WHERE id = $2',
+      [newHash, req.user.id]
+    );
+
+    res.json({ message: 'تم تغيير كلمة المرور بنجاح' });
+
+  } catch (err) {
+    console.error('Change password error:', err);
+    res.status(500).json({ error: 'خطأ في تغيير كلمة المرور' });
   }
 });
 
