@@ -132,6 +132,36 @@ router.post('/documents', auth(['seller']), upload.single('document'), async (re
   }
 });
 
+// GET /api/sellers/:id/products — منتجات بائع معين (عام)
+router.get('/:id/products', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { sort } = req.query;
+
+    let orderClause = 'ORDER BY p.created_at DESC';
+    if (sort === 'popular') {
+      orderClause = 'ORDER BY order_count DESC, p.created_at DESC';
+    }
+
+    const result = await db.query(`
+      SELECT p.*, c.name as category_name,
+             COALESCE(
+               (SELECT COUNT(*) FROM orders o
+                WHERE o.product_id = p.id), 0
+             )::int as order_count
+      FROM products p
+      LEFT JOIN categories c ON c.id = p.category_id
+      WHERE p.seller_id = $1
+      ${orderClause}
+    `, [id]);
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Error fetching seller products:', err);
+    res.status(500).json({ error: 'خطأ في جلب منتجات البائع' });
+  }
+});
+
 // GET /api/sellers/:id — seller details
 router.get('/:id', async (req, res) => {
   try {
