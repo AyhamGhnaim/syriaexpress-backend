@@ -80,12 +80,12 @@ router.get('/me', auth(['seller']), async (req, res) => {
 // PUT /api/sellers/me — update seller profile
 router.put('/me', auth(['seller']), async (req, res) => {
   try {
-    const { company_name_ar, company_name_en, activity_type, governorate, address, description, established_year, phone } = req.body;
+    const { company_name_ar, company_name_en, activity_type, governorate, address, description, established_year, phone, logo_url } = req.body;
     const result = await db.query(
       `UPDATE sellers SET company_name_ar=$1, company_name_en=$2, activity_type=$3,
-       governorate=$4, address=$5, description=$6, established_year=$7, phone=$8
-       WHERE user_id=$9 RETURNING *`,
-      [company_name_ar, company_name_en, activity_type, governorate, address, description, established_year || null, phone || null, req.user.id]
+       governorate=$4, address=$5, description=$6, established_year=$7, phone=$8, logo_url=$9
+       WHERE user_id=$10 RETURNING *`,
+      [company_name_ar, company_name_en, activity_type, governorate, address, description, established_year || null, phone || null, logo_url || null, req.user.id]
     );
     res.json({ message: 'تم تحديث الملف', seller: result.rows[0] });
   } catch (err) {
@@ -132,33 +132,45 @@ router.post('/documents', auth(['seller']), upload.single('document'), async (re
   }
 });
 
-// GET /api/sellers/:id/products — منتجات بائع معين (عام)
+// POST /api/sellers/me/logo — upload company logo
+router.post('/me/logo', auth(['seller']), upload.single('logo'), async (req, res) => {
+  try {
+    const seller = await db.query('SELECT id FROM sellers WHERE user_id = $1', [req.user.id]);
+    if (!seller.rows.length) return res.status(403).json({ error: 'غير مصرح' });
+    const sellerId = seller.rows[0].id;
+
+    if (!req.file) return res.status(400).json({ error: 'لم يتم رفع أي صورة' });
+
+    const uploadResult = await new Promise((resolve, reject) => {
+      const stream = cloudinary.uploader.upload_stream(
+        { folder: 'seller_logos', resource_type: 'image', transformation: [{ width: 400, height: 400, crop: 'fill' }] },
+        (error, result) => { if (error) reject(error); else resolve(result); }
+      );
+      stream.end(req.file.buffer);
+    });
+
+    await db.query(
+      'UPDATE sellers SET logo_url = $1 WHERE id = $2',
+      [uploadResult.secure_url, sellerId]
+    );
+
+    res.json({ message: 'تم رفع اللوغو', logo_url: uploadResult.secure_url });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'خطأ في رفع اللوغو' });
+  }
+});
+
+// GET /api/sellers/:id/products — products of a specific seller
 router.get('/:id/products', async (req, res) => {
   try {
-    const { id } = req.params;
-    const { sort } = req.query;
-
-    let orderClause = 'ORDER BY p.created_at DESC';
-    if (sort === 'popular') {
-      orderClause = 'ORDER BY order_count DESC, p.created_at DESC';
-    }
-
-    const result = await db.query(`
-      SELECT p.*, c.name as category_name,
-             COALESCE(
-               (SELECT COUNT(*) FROM orders o
-                WHERE o.product_id = p.id), 0
-             )::int as order_count
-      FROM products p
-      LEFT JOIN categories c ON c.id = p.category_id
-      WHERE p.seller_id = $1
-      ${orderClause}
-    `, [id]);
-
+    const result = await db.query(
+      'SELECT * FROM v_products_full WHERE seller_id = $1 ORDER BY created_at DESC',
+      [req.params.id]
+    );
     res.json(result.rows);
   } catch (err) {
-    console.error('Error fetching seller products:', err);
-    res.status(500).json({ error: 'خطأ في جلب منتجات البائع' });
+    res.status(500).json({ error: 'خطأ في الخادم' });
   }
 });
 
