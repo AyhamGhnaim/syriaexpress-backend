@@ -124,7 +124,25 @@ router.post('/documents', auth(['seller']), upload.single('document'), async (re
        VALUES ($1, $2, $3, $4)`,
       [sellerId, docType, docName, uploadResult.secure_url]
     );
+// إنشاء أو تحديث طلب التوثيق إلى pending
+const existingReq = await db.query(
+  `SELECT id FROM verification_requests WHERE seller_id = $1 ORDER BY created_at DESC LIMIT 1`,
+  [sellerId]
+);
 
+if (existingReq.rows.length) {
+  await db.query(
+    `UPDATE verification_requests 
+     SET status = 'pending', admin_notes = NULL, reviewed_at = NULL, reviewed_by = NULL
+     WHERE id = $1`,
+    [existingReq.rows[0].id]
+  );
+} else {
+  await db.query(
+    `INSERT INTO verification_requests (seller_id, status) VALUES ($1, 'pending')`,
+    [sellerId]
+  );
+}
     res.json({ message: 'تم رفع الوثيقة', url: uploadResult.secure_url });
   } catch (err) {
     console.error(err);
