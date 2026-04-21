@@ -36,7 +36,12 @@ app.use('/api/admin',         require('./routes/admin'));
 const db = require('./config/db');
 app.get('/api/categories', async (req, res) => {
   try {
-    const result = await db.query('SELECT * FROM categories ORDER BY sort_order');
+    const result = await db.query(
+      `SELECT id, name_ar, name_en, slug, status, icon, sort_order
+       FROM categories
+       WHERE status != 'inactive'
+       ORDER BY sort_order`
+    );
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: 'خطأ في الخادم' });
