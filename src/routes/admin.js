@@ -74,11 +74,11 @@ router.patch('/verifications/:id', async (req, res) => {
     return res.status(400).json({ error: 'إجراء غير صحيح' });
 
   try {
-    // Update verification request
+    // Update verification request — يقبل vr.id أو seller_id
     const vr = await db.query(
       `UPDATE verification_requests
        SET status=$1, admin_notes=$2, reviewed_by=$3, reviewed_at=NOW()
-       WHERE id=$4 RETURNING seller_id`,
+       WHERE id=$4 OR seller_id=$4 RETURNING id, seller_id`,
       [action, admin_notes, req.user.id, req.params.id]
     );
     if (!vr.rows.length) return res.status(404).json({ error: 'الطلب غير موجود' });
