@@ -151,6 +151,27 @@ router.patch('/users/:id', async (req, res) => {
   }
 });
 
+// ─── Delete user ─────────────────────────────────────────
+// DELETE /api/admin/users/:id
+router.delete('/users/:id', async (req, res) => {
+  try {
+    // منع حذف الأدمن نفسه
+    if (req.params.id === req.user.id)
+      return res.status(400).json({ error: 'لا يمكنك حذف حسابك الخاص' });
+
+    const result = await db.query(
+      'DELETE FROM users WHERE id=$1 RETURNING id',
+      [req.params.id]
+    );
+    if (!result.rows.length)
+      return res.status(404).json({ error: 'المستخدم غير موجود' });
+
+    res.json({ message: 'تم حذف المستخدم بنجاح' });
+  } catch (err) {
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
 // ─── Suspend / Activate user ─────────────────────────────
 router.patch('/users/:id/status', async (req, res) => {
   try {
