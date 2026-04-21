@@ -216,20 +216,62 @@ router.put('/settings/:key', async (req, res) => {
 });
 
 // ─── Categories management ───────────────────────────────
+
+// GET /api/admin/categories
 router.get('/categories', async (req, res) => {
   try {
-    const result = await db.query('SELECT * FROM categories ORDER BY sort_order');
+    const result = await db.query(
+      `SELECT id, name_ar, name_en, status, icon, sort_order
+       FROM categories ORDER BY sort_order`
+    );
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: 'خطأ في الخادم' });
   }
 });
 
+// PATCH /api/admin/categories/:id — تعديل اسم / حالة / أيقونة
 router.patch('/categories/:id', async (req, res) => {
   try {
-    const { is_active } = req.body;
-    await db.query('UPDATE categories SET is_active=$1 WHERE id=$2', [is_active, req.params.id]);
+    const { name_ar, status, icon } = req.body;
+
+    if (status && !['available', 'soon', 'inactive'].includes(status))
+      return res.status(400).json({ error: 'حالة غير صحيحة' });
+
+    const fields = [];
+    const params = [];
+
+    if (name_ar !== undefined) { params.push(name_ar); fields.push(`name_ar = $${params.length}`); }
+    if (status  !== undefined) { params.push(status);  fields.push(`status = $${params.length}`); }
+    if (icon    !== undefined) { params.push(icon);    fields.push(`icon = $${params.length}`); }
+
+    if (fields.length === 0)
+      return res.status(400).json({ error: 'لا توجد حقول للتعديل' });
+
+    params.push(req.params.id);
+    await db.query(
+      `UPDATE categories SET ${fields.join(', ')} WHERE id = $${params.length}`,
+      params
+    );
+
     res.json({ message: 'تم تحديث الفئة' });
+  } catch (err) {
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
+// POST /api/admin/categories — إضافة فئة جديدة
+router.post('/categories', async (req, res) => {
+  try {
+    const { name_ar, name_en = '', status = 'soon', icon = '📦' } = req.body;
+    if (!name_ar) return res.status(400).json({ error: 'اسم الفئة مطلوب' });
+
+    const result = await db.query(
+      `INSERT INTO categories (name_ar, name_en, status, icon)
+       VALUES ($1, $2, $3, $4) RETURNING *`,
+      [name_ar, name_en, status, icon]
+    );
+    res.status(201).json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: 'خطأ في الخادم' });
   }
