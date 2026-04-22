@@ -123,7 +123,7 @@ const auth = require('../middleware/auth');
 router.get('/me', auth(), async (req, res) => {
   try {
     const result = await db.query(
-      'SELECT id, name, email, phone, user_type, governorate, created_at FROM users WHERE id = $1',
+      'SELECT id, name, email, phone, user_type, governorate, created_at, avatar_url FROM users WHERE id = $1',
       [req.user.id]
     );
     res.json(result.rows[0]);
@@ -174,6 +174,33 @@ router.put('/change-password', auth(), async (req, res) => {
   } catch (err) {
     console.error('Change password error:', err);
     res.status(500).json({ error: 'خطأ في تغيير كلمة المرور' });
+  }
+});
+
+// ─── Upload Avatar ───────────────────────────────────────
+// POST /api/auth/avatar
+const cloudinary = require('../config/cloudinary');
+const multer = require('multer');
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
+
+router.post('/avatar', auth(), upload.single('avatar'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'لم يتم رفع صورة' });
+
+    const b64 = req.file.buffer.toString('base64');
+    const dataUri = `data:${req.file.mimetype};base64,${b64}`;
+
+    const result = await cloudinary.uploader.upload(dataUri, {
+      folder: 'syriaexpress/avatars',
+      transformation: [{ width: 200, height: 200, crop: 'fill', gravity: 'face' }]
+    });
+
+    await db.query('UPDATE users SET avatar_url =  WHERE id = ', [result.secure_url, req.user.id]);
+
+    res.json({ avatar_url: result.secure_url });
+  } catch (err) {
+    console.error('Avatar upload error:', err);
+    res.status(500).json({ error: 'خطأ في رفع الصورة' });
   }
 });
 
