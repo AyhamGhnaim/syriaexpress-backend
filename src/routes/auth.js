@@ -195,7 +195,7 @@ router.post('/avatar', auth(), upload.single('avatar'), async (req, res) => {
       transformation: [{ width: 200, height: 200, crop: 'fill', gravity: 'face' }]
     });
 
-    await db.query('UPDATE users SET avatar_url =  WHERE id = ', [result.secure_url, req.user.id]);
+    await db.query('UPDATE users SET avatar_url = $1 WHERE id = $2', [result.secure_url, req.user.id]);
 
     res.json({ avatar_url: result.secure_url });
   } catch (err) {
