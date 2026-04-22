@@ -67,7 +67,9 @@ router.get('/me/dashboard', auth(['seller']), async (req, res) => {
 router.get('/me', auth(['seller']), async (req, res) => {
   try {
     const result = await db.query(
-      'SELECT * FROM sellers WHERE user_id = $1',
+      `SELECT s.*,
+        (SELECT admin_notes FROM verification_requests WHERE seller_id = s.id ORDER BY created_at DESC LIMIT 1) as admin_notes
+       FROM sellers s WHERE s.user_id = $1`,
       [req.user.id]
     );
     if (!result.rows.length) return res.status(404).json({ error: 'لم يُوجد' });
