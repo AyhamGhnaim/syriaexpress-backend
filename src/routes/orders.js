@@ -93,7 +93,8 @@ router.get('/seller', auth(['seller']), async (req, res) => {
     params.push(limit, (page-1)*limit);
     const result = await db.query(
       `SELECT o.*, p.name_ar, p.unit,
-              u.name as buyer_name, u.phone as buyer_phone, u.governorate as buyer_gov
+              u.name as buyer_name, u.phone as buyer_phone, u.governorate as buyer_gov,
+              (SELECT image_url FROM product_images WHERE product_id = p.id AND is_primary=true LIMIT 1) as product_image
        FROM orders o
        JOIN products p ON o.product_id = p.id
        JOIN users u    ON o.buyer_id   = u.id
