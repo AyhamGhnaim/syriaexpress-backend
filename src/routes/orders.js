@@ -63,7 +63,7 @@ router.get('/my', auth(['buyer']), async (req, res) => {
     const result = await db.query(
       `SELECT o.*, p.name_ar, p.name_en, p.unit,
               s.company_name_ar, s.partner_tier,
-              (SELECT image_url FROM product_images WHERE product_id = p.id AND is_primary=true LIMIT 1) as product_image
+              COALESCE((SELECT image_url FROM product_images WHERE product_id = p.id AND is_primary=true LIMIT 1), p.image_url) as product_image
        FROM orders o
        JOIN products p ON o.product_id = p.id
        JOIN sellers s  ON o.seller_id  = s.id
@@ -146,7 +146,8 @@ router.get('/:id', auth(), async (req, res) => {
     const result = await db.query(
       `SELECT o.*, p.name_ar, p.name_en, p.unit, p.min_order_quantity,
               s.company_name_ar, s.partner_tier, s.governorate as seller_gov,
-              u.name as buyer_name, u.phone as buyer_phone
+              u.name as buyer_name, u.phone as buyer_phone,
+              COALESCE((SELECT image_url FROM product_images WHERE product_id = p.id AND is_primary=true LIMIT 1), p.image_url) as product_image
        FROM orders o
        JOIN products p ON o.product_id = p.id
        JOIN sellers s  ON o.seller_id  = s.id
