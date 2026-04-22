@@ -134,8 +134,10 @@ router.post('/', auth(['seller']), async (req, res) => {
   ship_price_inside, ship_price_outside, ship_price_intl
 } = req.body;
 
-    const seller = await db.query('SELECT id FROM sellers WHERE user_id = $1', [req.user.id]);
+    const seller = await db.query('SELECT id, verification_status FROM sellers WHERE user_id = $1', [req.user.id]);
     if (!seller.rows.length) return res.status(403).json({ error: 'لست بائعاً معتمداً' });
+    if (seller.rows[0].verification_status === 'rejected') return res.status(403).json({ error: 'تم رفض طلب توثيقك — لا يمكنك إضافة منتجات' });
+    if (seller.rows[0].verification_status !== 'verified') return res.status(403).json({ error: 'حسابك قيد المراجعة — يمكنك إضافة المنتجات بعد قبول التوثيق' });
 
     const result = await db.query(
       `INSERT INTO products

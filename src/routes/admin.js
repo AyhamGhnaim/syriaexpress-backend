@@ -126,8 +126,11 @@ router.get('/users', async (req, res) => {
     params.push(limit, (page-1)*limit);
 
     const result = await db.query(
-      `SELECT id,name,email,phone,user_type,governorate,is_active,created_at
-       FROM users ${w} ORDER BY created_at DESC
+      `SELECT u.id,u.name,u.email,u.phone,u.user_type,u.governorate,u.is_active,u.created_at,
+              s.verification_status
+       FROM users u
+       LEFT JOIN sellers s ON s.user_id = u.id
+       ${w} ORDER BY u.created_at DESC
        LIMIT $${params.length-1} OFFSET $${params.length}`,
       params
     );
