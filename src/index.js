@@ -7,12 +7,10 @@ const app = express();app.set('trust proxy', 1);
 
 // ─── Middleware ───────────────────────────────────────────
 app.use(cors({
-  origin: [
-    process.env.FRONTEND_URL,
-    'http://localhost:5500',
-    'http://127.0.0.1:5500'
-  ],
-  credentials: true
+  origin: function(origin, callback) { callback(null, true); },
+  credentials: true,
+  methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
+  allowedHeaders: ['Content-Type','Authorization']
 }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
