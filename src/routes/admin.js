@@ -271,10 +271,17 @@ router.post('/categories', async (req, res) => {
     const maxOrder = await db.query('SELECT COALESCE(MAX(sort_order), 0) as max FROM categories');
     const sortOrder = parseInt(maxOrder.rows[0].max) + 1;
 
+    // أنشئ slug من الاسم الإنجليزي أو العربي
+    const slug = (name_en || name_ar)
+      .toLowerCase()
+      .replace(/\s+/g, '-')
+      .replace(/[^a-z0-9\u0600-\u06ff-]/g, '')
+      + '-' + Date.now();
+
     const result = await db.query(
-      `INSERT INTO categories (name_ar, name_en, status, icon, sort_order)
-       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [name_ar, name_en, status, icon, sortOrder]
+      `INSERT INTO categories (name_ar, name_en, slug, status, icon, sort_order)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [name_ar, name_en, slug, status, icon, sortOrder]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
