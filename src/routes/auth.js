@@ -204,4 +204,15 @@ router.post('/avatar', auth(), upload.single('avatar'), async (req, res) => {
   }
 });
 
+// ─── Delete Avatar ───────────────────────────────────────
+// DELETE /api/auth/avatar
+router.delete('/avatar', auth(), async (req, res) => {
+  try {
+    await db.query('UPDATE users SET avatar_url = NULL WHERE id = $1', [req.user.id]);
+    res.json({ message: 'تم حذف الصورة' });
+  } catch (err) {
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
 module.exports = router;
