@@ -126,7 +126,8 @@ router.get('/users', async (req, res) => {
     params.push(limit, (page-1)*limit);
 
     const result = await db.query(
-      `SELECT u.id,u.name,u.email,u.phone,u.user_type,u.governorate,u.is_active,u.created_at,u.avatar_url,
+      `SELECT u.id,u.name,u.email,u.phone,u.user_type,u.governorate,u.is_active,u.created_at,
+              COALESCE(u.avatar_url, s.logo_url) as avatar_url,
               s.verification_status
        FROM users u
        LEFT JOIN sellers s ON s.user_id = u.id
