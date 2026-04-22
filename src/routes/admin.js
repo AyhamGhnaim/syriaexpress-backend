@@ -74,11 +74,11 @@ router.patch('/verifications/:id', async (req, res) => {
     return res.status(400).json({ error: 'إجراء غير صحيح' });
 
   try {
-    // Update verification request — يقبل vr.id أو seller_id
+    // Update verification request
     const vr = await db.query(
       `UPDATE verification_requests
        SET status=$1, admin_notes=$2, reviewed_by=$3, reviewed_at=NOW()
-       WHERE id=$4 OR seller_id=$4 RETURNING id, seller_id`,
+       WHERE id=$4 RETURNING seller_id`,
       [action, admin_notes, req.user.id, req.params.id]
     );
     if (!vr.rows.length) return res.status(404).json({ error: 'الطلب غير موجود' });
@@ -146,27 +146,6 @@ router.patch('/users/:id', async (req, res) => {
       return res.status(400).json({ error: 'نوع مستخدم غير صحيح' });
     await db.query('UPDATE users SET user_type=$1 WHERE id=$2', [user_type, req.params.id]);
     res.json({ message: 'تم تغيير نوع المستخدم' });
-  } catch (err) {
-    res.status(500).json({ error: 'خطأ في الخادم' });
-  }
-});
-
-// ─── Delete user ─────────────────────────────────────────
-// DELETE /api/admin/users/:id
-router.delete('/users/:id', async (req, res) => {
-  try {
-    // منع حذف الأدمن نفسه
-    if (req.params.id === req.user.id)
-      return res.status(400).json({ error: 'لا يمكنك حذف حسابك الخاص' });
-
-    const result = await db.query(
-      'DELETE FROM users WHERE id=$1 RETURNING id',
-      [req.params.id]
-    );
-    if (!result.rows.length)
-      return res.status(404).json({ error: 'المستخدم غير موجود' });
-
-    res.json({ message: 'تم حذف المستخدم بنجاح' });
   } catch (err) {
     res.status(500).json({ error: 'خطأ في الخادم' });
   }
@@ -262,9 +241,10 @@ router.patch('/categories/:id', async (req, res) => {
     const fields = [];
     const params = [];
 
-    if (name_ar !== undefined) { params.push(name_ar); fields.push(`name_ar = $${params.length}`); }
-    if (status  !== undefined) { params.push(status);  fields.push(`status = $${params.length}`); }
-    if (icon    !== undefined) { params.push(icon);    fields.push(`icon = $${params.length}`); }
+    if (name_ar    !== undefined) { params.push(name_ar);              fields.push(`name_ar = $${params.length}`); }
+    if (status     !== undefined) { params.push(status);               fields.push(`status = $${params.length}`); }
+    if (icon       !== undefined) { params.push(icon);                 fields.push(`icon = $${params.length}`); }
+    if (req.body.sort_order !== undefined) { params.push(req.body.sort_order); fields.push(`sort_order = $${params.length}`); }
 
     if (fields.length === 0)
       return res.status(400).json({ error: 'لا توجد حقول للتعديل' });
@@ -287,14 +267,31 @@ router.post('/categories', async (req, res) => {
     const { name_ar, name_en = '', status = 'soon', icon = '📦' } = req.body;
     if (!name_ar) return res.status(400).json({ error: 'اسم الفئة مطلوب' });
 
+    // احسب sort_order التالي
+    const maxOrder = await db.query('SELECT COALESCE(MAX(sort_order), 0) as max FROM categories');
+    const sortOrder = parseInt(maxOrder.rows[0].max) + 1;
+
     const result = await db.query(
-      `INSERT INTO categories (name_ar, name_en, status, icon)
-       VALUES ($1, $2, $3, $4) RETURNING *`,
-      [name_ar, name_en, status, icon]
+      `INSERT INTO categories (name_ar, name_en, status, icon, sort_order)
+       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [name_ar, name_en, status, icon, sortOrder]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
+// DELETE /api/admin/categories/:id — حذف فئة
+router.delete('/categories/:id', async (req, res) => {
+  try {
+    await db.query('DELETE FROM categories WHERE id = $1', [req.params.id]);
+    res.json({ message: 'تم حذف الفئة' });
+  } catch (err) {
+    // إذا فيه منتجات مرتبطة، غيّر الحالة بدل الحذف
+    await db.query("UPDATE categories SET status='inactive' WHERE id=$1", [req.params.id])
+      .catch(() => {});
+    res.json({ message: 'تم إخفاء الفئة (تحتوي على منتجات)' });
   }
 });
 // GET /api/admin/sellers/:id/documents
