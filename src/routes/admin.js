@@ -322,6 +322,29 @@ router.get('/sellers/:id/documents', async (req, res) => {
   }
 });
 
+// ─── All orders for analytics ────────────────────────────
+// GET /api/admin/orders
+router.get('/orders', async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT o.id, o.status, o.quantity, o.shipping_price, o.created_at,
+              o.seller_id, o.buyer_id, o.shipping_type,
+              p.price, p.name_ar, p.category_id,
+              c.name_ar as category_name_ar,
+              s.company_name_ar,
+              (o.quantity * p.price + o.shipping_price) as total_amount
+       FROM orders o
+       JOIN products p ON o.product_id = p.id
+       JOIN sellers s  ON o.seller_id  = s.id
+       JOIN categories c ON p.category_id = c.id
+       ORDER BY o.created_at DESC`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
 // ─── Categories Admin ─────────────────────────────────────
 
 // GET /api/admin/categories — all categories including inactive
