@@ -10,23 +10,37 @@ router.use(auth(['admin']));
 // GET /api/admin/overview
 router.get('/overview', async (req, res) => {
   try {
-    const [users, sellers, orders, pending, revenue, topCat] = await Promise.all([
+    const [users, sellers, orders, pending] = await Promise.all([
       db.query("SELECT COUNT(*) FROM users WHERE user_type='buyer'"),
       db.query("SELECT COUNT(*) FROM sellers WHERE verification_status='verified'"),
       db.query("SELECT COUNT(*) FROM orders"),
-      db.query("SELECT COUNT(*) FROM verification_requests WHERE status='pending'"),
-      db.query(`SELECT
-        COALESCE(SUM(o.total_amount),0) as gmv,
-        COUNT(CASE WHEN o.status='delivered' THEN 1 END) as delivered,
-        COUNT(CASE WHEN o.status!='cancelled' THEN 1 END) as active
-        FROM orders o`),
-      db.query(`SELECT c.name_ar, COUNT(o.id) as cnt
+      db.query("SELECT COUNT(*) FROM verification_requests WHERE status='pending'")
+    ]);
+
+    // حساب الإيرادات بشكل آمن
+    let gmv = 0, delivered = 0, active = 0;
+    try {
+      const rev = await db.query(`SELECT
+        COALESCE(SUM(total_amount),0) as gmv,
+        COUNT(CASE WHEN status='delivered' THEN 1 END) as delivered,
+        COUNT(CASE WHEN status!='cancelled' THEN 1 END) as active
+        FROM orders`);
+      gmv       = parseFloat(rev.rows[0].gmv)       || 0;
+      delivered = parseInt(rev.rows[0].delivered)   || 0;
+      active    = parseInt(rev.rows[0].active)      || 0;
+    } catch(e) { /* total_amount قد لا يكون موجوداً */ }
+
+    // أكثر الفئات
+    let topCategory = null;
+    try {
+      const topCat = await db.query(`SELECT c.name_ar, COUNT(o.id) as cnt
         FROM orders o
         LEFT JOIN products p ON o.product_id=p.id
         LEFT JOIN categories c ON p.category_id=c.id
         WHERE o.status != 'cancelled' AND c.name_ar IS NOT NULL
-        GROUP BY c.name_ar ORDER BY cnt DESC LIMIT 1`)
-    ]);
+        GROUP BY c.name_ar ORDER BY cnt DESC LIMIT 1`);
+      topCategory = topCat.rows[0]?.name_ar || null;
+    } catch(e) {}
 
     const recentOrders = await db.query(
       `SELECT o.id, o.status, o.quantity, o.created_at,
@@ -38,17 +52,16 @@ router.get('/overview', async (req, res) => {
        ORDER BY o.created_at DESC LIMIT 10`
     );
 
-    const rev = revenue.rows[0];
     res.json({
       stats: {
         buyers:           parseInt(users.rows[0].count),
         verified_sellers: parseInt(sellers.rows[0].count),
         total_orders:     parseInt(orders.rows[0].count),
         pending_verif:    parseInt(pending.rows[0].count),
-        total_revenue:    parseFloat(rev.gmv) || 0,
-        delivered_orders: parseInt(rev.delivered) || 0,
-        active_orders:    parseInt(rev.active) || 0,
-        top_category:     topCat.rows[0]?.name_ar || null
+        total_revenue:    gmv,
+        delivered_orders: delivered,
+        active_orders:    active,
+        top_category:     topCategory
       },
       recentOrders: recentOrders.rows
     });
