@@ -10,11 +10,22 @@ router.use(auth(['admin']));
 // GET /api/admin/overview
 router.get('/overview', async (req, res) => {
   try {
-    const [users, sellers, orders, pending] = await Promise.all([
+    const [users, sellers, orders, pending, revenue, topCat] = await Promise.all([
       db.query("SELECT COUNT(*) FROM users WHERE user_type='buyer'"),
       db.query("SELECT COUNT(*) FROM sellers WHERE verification_status='verified'"),
       db.query("SELECT COUNT(*) FROM orders"),
-      db.query("SELECT COUNT(*) FROM verification_requests WHERE status='pending'")
+      db.query("SELECT COUNT(*) FROM verification_requests WHERE status='pending'"),
+      db.query(`SELECT
+        COALESCE(SUM(o.total_amount),0) as gmv,
+        COUNT(CASE WHEN o.status='delivered' THEN 1 END) as delivered,
+        COUNT(CASE WHEN o.status!='cancelled' THEN 1 END) as active
+        FROM orders o`),
+      db.query(`SELECT c.name_ar, COUNT(o.id) as cnt
+        FROM orders o
+        JOIN products p ON o.product_id=p.id
+        JOIN categories c ON p.category_id=c.id
+        WHERE o.status != 'cancelled'
+        GROUP BY c.name_ar ORDER BY cnt DESC LIMIT 1`)
     ]);
 
     const recentOrders = await db.query(
@@ -27,12 +38,17 @@ router.get('/overview', async (req, res) => {
        ORDER BY o.created_at DESC LIMIT 10`
     );
 
+    const rev = revenue.rows[0];
     res.json({
       stats: {
-        buyers:          parseInt(users.rows[0].count),
-        verified_sellers:parseInt(sellers.rows[0].count),
-        total_orders:    parseInt(orders.rows[0].count),
-        pending_verif:   parseInt(pending.rows[0].count)
+        buyers:           parseInt(users.rows[0].count),
+        verified_sellers: parseInt(sellers.rows[0].count),
+        total_orders:     parseInt(orders.rows[0].count),
+        pending_verif:    parseInt(pending.rows[0].count),
+        total_revenue:    parseFloat(rev.gmv) || 0,
+        delivered_orders: parseInt(rev.delivered) || 0,
+        active_orders:    parseInt(rev.active) || 0,
+        top_category:     topCat.rows[0]?.name_ar || null
       },
       recentOrders: recentOrders.rows
     });
