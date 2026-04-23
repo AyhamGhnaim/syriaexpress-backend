@@ -55,6 +55,10 @@ router.get('/verifications', async (req, res) => {
        JOIN users   u ON s.user_id = u.id
        LEFT JOIN seller_documents sd ON sd.seller_id = s.id
        WHERE vr.status = $1
+         AND vr.created_at = (
+           SELECT MAX(vr2.created_at) FROM verification_requests vr2
+           WHERE vr2.seller_id = vr.seller_id AND vr2.status = $1
+         )
        GROUP BY vr.id, s.company_name_ar, s.company_name_en, s.activity_type,
                 s.governorate, u.name, u.email, u.phone
        ORDER BY vr.created_at ASC`,
