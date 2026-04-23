@@ -92,9 +92,10 @@ router.get('/seller', auth(['seller']), async (req, res) => {
 
     params.push(limit, (page-1)*limit);
     const result = await db.query(
-      `SELECT o.*, p.name_ar, p.unit,
+      `SELECT o.*, p.name_ar, p.unit, p.price,
               u.name as buyer_name, u.phone as buyer_phone, u.governorate as buyer_gov,
-              COALESCE((SELECT image_url FROM product_images WHERE product_id = p.id AND is_primary=true LIMIT 1), p.image_url) as product_image
+              COALESCE((SELECT image_url FROM product_images WHERE product_id = p.id AND is_primary=true LIMIT 1), p.image_url) as product_image,
+              (o.quantity * p.price + o.shipping_price) as total_amount
        FROM orders o
        JOIN products p ON o.product_id = p.id
        JOIN users u    ON o.buyer_id   = u.id
