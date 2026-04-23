@@ -128,7 +128,7 @@ router.get('/users', async (req, res) => {
     const result = await db.query(
       `SELECT u.id,u.name,u.email,u.phone,u.user_type,u.governorate,u.is_active,u.created_at,
               COALESCE(u.avatar_url, s.logo_url) as avatar_url,
-              s.verification_status
+              s.verification_status, s.company_name_ar
        FROM users u
        LEFT JOIN sellers s ON s.user_id = u.id
        ${w} ORDER BY u.created_at DESC
