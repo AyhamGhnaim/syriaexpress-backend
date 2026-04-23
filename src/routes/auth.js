@@ -204,6 +204,53 @@ router.post('/avatar', auth(), upload.single('avatar'), async (req, res) => {
   }
 });
 
+// ─── Update profile (email, phone, name) ────────────────
+// PUT /api/auth/me
+router.put('/me', auth(), async (req, res) => {
+  try {
+    const { name, phone, email } = req.body;
+    const fields = [];
+    const vals = [];
+
+    if (name)  { vals.push(name.trim());  fields.push(`name=$${vals.length}`); }
+    if (phone) { vals.push(phone.trim()); fields.push(`phone=$${vals.length}`); }
+    if (email) {
+      const newEmail = email.trim().toLowerCase();
+      // Check email not taken by another user
+      const exists = await db.query(
+        'SELECT id FROM users WHERE LOWER(email)=$1 AND id!=$2', [newEmail, req.user.id]
+      );
+      if (exists.rows.length) return res.status(400).json({ error: 'البريد الإلكتروني مستخدم من حساب آخر' });
+      vals.push(newEmail);
+      fields.push(`email=$${vals.length}`);
+    }
+
+    if (!fields.length) return res.status(400).json({ error: 'لا توجد بيانات للتحديث' });
+
+    vals.push(req.user.id);
+    const result = await db.query(
+      `UPDATE users SET ${fields.join(',')} WHERE id=$${vals.length} RETURNING id,name,email,phone,user_type,governorate`,
+      vals
+    );
+    res.json({ message: 'تم تحديث البيانات بنجاح', user: result.rows[0] });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
+// ─── Delete account ───────────────────────────────────────
+// DELETE /api/auth/me
+router.delete('/me', auth(), async (req, res) => {
+  try {
+    await db.query('DELETE FROM users WHERE id=$1', [req.user.id]);
+    res.json({ message: 'تم حذف الحساب نهائياً' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
 // ─── Delete Avatar ───────────────────────────────────────
 // DELETE /api/auth/avatar
 router.delete('/avatar', auth(), async (req, res) => {
