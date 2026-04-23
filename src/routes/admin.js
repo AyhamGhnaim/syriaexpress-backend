@@ -22,9 +22,9 @@ router.get('/overview', async (req, res) => {
         FROM orders o`),
       db.query(`SELECT c.name_ar, COUNT(o.id) as cnt
         FROM orders o
-        JOIN products p ON o.product_id=p.id
-        JOIN categories c ON p.category_id=c.id
-        WHERE o.status != 'cancelled'
+        LEFT JOIN products p ON o.product_id=p.id
+        LEFT JOIN categories c ON p.category_id=c.id
+        WHERE o.status != 'cancelled' AND c.name_ar IS NOT NULL
         GROUP BY c.name_ar ORDER BY cnt DESC LIMIT 1`)
     ]);
 
@@ -32,9 +32,9 @@ router.get('/overview', async (req, res) => {
       `SELECT o.id, o.status, o.quantity, o.created_at,
               p.name_ar, s.company_name_ar, u.name as buyer_name
        FROM orders o
-       JOIN products p ON o.product_id=p.id
-       JOIN sellers  s ON o.seller_id=s.id
-       JOIN users    u ON o.buyer_id=u.id
+       LEFT JOIN products p ON o.product_id=p.id
+       LEFT JOIN sellers  s ON o.seller_id=s.id
+       LEFT JOIN users    u ON o.buyer_id=u.id
        ORDER BY o.created_at DESC LIMIT 10`
     );
 
