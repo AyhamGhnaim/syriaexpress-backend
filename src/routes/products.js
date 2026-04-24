@@ -85,6 +85,7 @@ router.get('/:id', async (req, res) => {
       `SELECT p.*, s.company_name_ar, s.company_name_en, s.partner_tier,
               s.governorate as seller_governorate, s.description as seller_description,
               s.logo_url as seller_logo_url,
+              s.verification_status as seller_verification_status,
               c.name_ar as category_name_ar, c.slug as category_slug,
               u.phone as seller_phone, u.email as seller_email
        FROM products p
