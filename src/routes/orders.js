@@ -111,14 +111,20 @@ router.get('/seller', auth(['seller']), async (req, res) => {
   }
 });
 
-// ─── Update order status (seller) ───────────────────────
+// ─── Update order status (seller/admin/buyer cancel) ─────
 // PATCH /api/orders/:id/status
-router.patch('/:id/status', auth(['seller','admin']), async (req, res) => {
+router.patch('/:id/status', auth(['seller','admin','buyer']), async (req, res) => {
   const { status, cancel_reason } = req.body;
   const validStatuses = ['confirmed','shipped','delivered','cancelled'];
 
   if (!validStatuses.includes(status))
     return res.status(400).json({ error: 'حالة غير صحيحة' });
+
+  const isBuyer = req.user.user_type === 'buyer';
+
+  // المشتري يستطيع فقط الإلغاء
+  if (isBuyer && status !== 'cancelled')
+    return res.status(403).json({ error: 'غير مسموح' });
 
   try {
     const timestampField = {
@@ -128,14 +134,22 @@ router.patch('/:id/status', auth(['seller','admin']), async (req, res) => {
       cancelled: 'cancelled_at'
     }[status];
 
-    const result = await db.query(
-      `UPDATE orders SET status = $1, ${timestampField} = NOW(),
-       cancel_reason = $2
-       WHERE id = $3 RETURNING *`,
-      [status, cancel_reason || null, req.params.id]
-    );
+    let query, params;
 
-    if (!result.rows.length) return res.status(404).json({ error: 'الطلب غير موجود' });
+    if (isBuyer) {
+      // المشتري: فقط طلباته بحالة pending
+      query = `UPDATE orders SET status = $1, ${timestampField} = NOW(), cancel_reason = $2
+               WHERE id = $3 AND buyer_id = $4 AND status = 'pending' RETURNING *`;
+      params = [status, cancel_reason || 'إلغاء من المشتري', req.params.id, req.user.id];
+    } else {
+      query = `UPDATE orders SET status = $1, ${timestampField} = NOW(), cancel_reason = $2
+               WHERE id = $3 RETURNING *`;
+      params = [status, cancel_reason || null, req.params.id];
+    }
+
+    const result = await db.query(query, params);
+
+    if (!result.rows.length) return res.status(404).json({ error: 'الطلب غير موجود أو لا يمكن إلغاؤه' });
     res.json({ message: 'تم تحديث حالة الطلب', order: result.rows[0] });
   } catch (err) {
     res.status(500).json({ error: 'خطأ في الخادم' });
