@@ -240,14 +240,48 @@ router.put('/me', auth(), async (req, res) => {
 });
 
 // ─── Delete account ───────────────────────────────────────
-// DELETE /api/auth/me
+// DELETE /api/auth/me — حذف الحساب كاملاً مع كل البيانات
 router.delete('/me', auth(), async (req, res) => {
+  const client = await db.connect();
   try {
-    await db.query('DELETE FROM users WHERE id=$1', [req.user.id]);
+    await client.query('BEGIN');
+    const userId = req.user.id;
+
+    // جلب seller_id إن وُجد
+    const sellerRes = await client.query('SELECT id FROM sellers WHERE user_id = $1', [userId]);
+    const sellerId = sellerRes.rows[0]?.id;
+
+    if (sellerId) {
+      await client.query('DELETE FROM product_images WHERE product_id IN (SELECT id FROM products WHERE seller_id = $1)', [sellerId]);
+      await client.query('DELETE FROM saved_products WHERE product_id IN (SELECT id FROM products WHERE seller_id = $1)', [sellerId]);
+      await client.query('DELETE FROM reviews WHERE product_id IN (SELECT id FROM products WHERE seller_id = $1)', [sellerId]);
+      await client.query('DELETE FROM cart_items WHERE product_id IN (SELECT id FROM products WHERE seller_id = $1)', [sellerId]);
+      await client.query('DELETE FROM products WHERE seller_id = $1', [sellerId]);
+      await client.query('DELETE FROM seller_documents WHERE seller_id = $1', [sellerId]);
+      await client.query('DELETE FROM verification_requests WHERE seller_id = $1', [sellerId]);
+      await client.query('DELETE FROM orders WHERE seller_id = $1', [sellerId]);
+      await client.query('DELETE FROM sellers WHERE id = $1', [sellerId]);
+    }
+
+    // حذف بيانات المشتري
+    await client.query('DELETE FROM cart_items WHERE user_id = $1', [userId]);
+    await client.query('DELETE FROM saved_products WHERE user_id = $1', [userId]);
+    await client.query('DELETE FROM reviews WHERE user_id = $1', [userId]);
+    await client.query('DELETE FROM notifications WHERE user_id = $1', [userId]);
+    await client.query('DELETE FROM orders WHERE buyer_id = $1', [userId]);
+    await client.query('DELETE FROM audit_log WHERE user_id = $1', [userId]);
+
+    // حذف المستخدم نهائياً
+    await client.query('DELETE FROM users WHERE id = $1', [userId]);
+
+    await client.query('COMMIT');
     res.json({ message: 'تم حذف الحساب نهائياً' });
   } catch (err) {
-    console.error(err);
+    await client.query('ROLLBACK');
+    console.error('Delete account error:', err);
     res.status(500).json({ error: 'خطأ في الخادم' });
+  } finally {
+    client.release();
   }
 });
 
