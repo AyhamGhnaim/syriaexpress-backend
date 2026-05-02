@@ -15,11 +15,52 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// Rate limiting
-const limiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 100 });
-const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, message: { error: 'محاولات كثيرة، انتظر 15 دقيقة' } });
-app.use('/api', limiter);
-app.use('/api/auth', authLimiter);
+// ─── Rate limiting ────────────────────────────────────────
+// إعدادات مشتركة: ترسل headers معيارية ولا تحسب طلبات health
+const baseLimit = {
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: (req) => req.path === '/api/health'
+};
+
+// 1) عام لكل /api — يسمح بتصفح مريح
+const generalLimiter = rateLimit({
+  ...baseLimit,
+  windowMs: 15 * 60 * 1000,
+  max: 300,
+  message: { error: 'طلبات كثيرة، حاول بعد قليل' }
+});
+
+// 2) login — صارم ضد brute force، يتجاهل المحاولات الناجحة
+const loginLimiter = rateLimit({
+  ...baseLimit,
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  skipSuccessfulRequests: true,
+  message: { error: 'محاولات دخول كثيرة، انتظر 15 دقيقة' }
+});
+
+// 3) register — منع spam حسابات
+const registerLimiter = rateLimit({
+  ...baseLimit,
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  message: { error: 'عدد كبير من محاولات التسجيل، انتظر ساعة' }
+});
+
+// 4) change-password — حساس لكن نادر
+const passwordLimiter = rateLimit({
+  ...baseLimit,
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  message: { error: 'محاولات كثيرة لتغيير كلمة السر، انتظر 15 دقيقة' }
+});
+
+// تطبيق الـ limiters قبل الـ routes
+app.use('/api', generalLimiter);
+app.use('/api/auth/login',           loginLimiter);
+app.use('/api/auth/register',        registerLimiter);
+app.use('/api/auth/change-password', passwordLimiter);
 
 // ─── Routes ───────────────────────────────────────────────
 app.use('/api/auth',          require('./routes/auth'));
