@@ -34,16 +34,18 @@ router.get('/', async (req, res) => {
 
     params.push(limit, offset);
     const query = `
-      SELECT * FROM v_products_full
+      SELECT v.*, s.logo_url as seller_logo_url
+      FROM v_products_full v
+      LEFT JOIN sellers s ON s.id = v.seller_id
       ${whereClause}
-      ORDER BY partner_tier = 'gold' DESC, partner_tier = 'silver' DESC, views_count DESC
+      ORDER BY v.partner_tier = 'gold' DESC, v.partner_tier = 'silver' DESC, v.views_count DESC
       LIMIT $${params.length - 1} OFFSET $${params.length}
     `;
 
     const result = await db.query(query, params);
 
     const countResult = await db.query(
-      `SELECT COUNT(*) FROM v_products_full ${whereClause}`,
+      `SELECT COUNT(*) FROM v_products_full v LEFT JOIN sellers s ON s.id = v.seller_id ${whereClause}`,
       params.slice(0, -2)
     );
 
