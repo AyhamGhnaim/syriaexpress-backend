@@ -106,10 +106,31 @@ app.use((err, req, res, next) => {
 });
 
 // ─── Start server ─────────────────────────────────────────
+
+// ─── Global error handlers (منع crash غير متوقع) ────────
+process.on('uncaughtException', (err) => {
+  console.error('💥 Uncaught Exception:', err.message);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('💥 Unhandled Rejection:', reason);
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 SyriaExpress API running on port ${PORT}`);
   console.log(`📡 Health: http://localhost:${PORT}/api/health`);
+
+  // ─── Self-ping كل 14 دقيقة لمنع نوم Render ────────────
+  if (process.env.NODE_ENV === 'production') {
+    setInterval(() => {
+      const https = require('https');
+      https.get('https://syriaexpress-backend.onrender.com/api/health', (res) => {
+        console.log(`🏓 Self-ping: ${res.statusCode}`);
+      }).on('error', (e) => {
+        console.error(`🏓 Self-ping failed: ${e.message}`);
+      });
+    }, 14 * 60 * 1000); // كل 14 دقيقة
+  }
 });
 
 module.exports = app;
