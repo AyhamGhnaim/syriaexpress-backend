@@ -63,6 +63,8 @@ router.get('/my', auth(['buyer']), async (req, res) => {
     const result = await db.query(
       `SELECT o.*, p.name_ar, p.name_en, p.unit, p.price,
               s.company_name_ar, s.partner_tier,
+              s.governorate as seller_governorate,
+              p.outside_governorates as outside_governorates,
               COALESCE((SELECT image_url FROM product_images WHERE product_id = p.id AND is_primary=true LIMIT 1), p.image_url) as product_image,
               (o.quantity * p.price + o.shipping_price) as total_amount
        FROM orders o
