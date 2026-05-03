@@ -196,7 +196,8 @@ router.put('/:id', auth(['seller']), async (req, res) => {
     res.json({ message: 'تم تحديث المنتج', product: result.rows[0] });
 
   } catch (err) {
-    res.status(500).json({ error: 'خطأ في الخادم' });
+    console.error('PUT /products/:id error:', err);
+    res.status(500).json({ error: 'خطأ في الخادم', details: err.message, code: err.code });
   }
 });
 
