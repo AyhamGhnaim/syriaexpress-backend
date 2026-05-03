@@ -83,6 +83,12 @@ router.get('/me', auth(['seller']), async (req, res) => {
 router.put('/me', auth(['seller']), async (req, res) => {
   try {
     const { company_name_ar, company_name_en, activity_type, governorate, address, description, established_year, phone, logo_url } = req.body;
+
+    // البائعون يجب أن يكونوا داخل سوريا
+    if (governorate === 'خارج سوريا') {
+      return res.status(400).json({ error: 'البائعون يجب أن يكونوا داخل سوريا' });
+    }
+
     const result = await db.query(
       `UPDATE sellers SET company_name_ar=$1, company_name_en=$2, activity_type=$3,
        governorate=$4, address=$5, description=$6, established_year=$7, phone=$8, logo_url=$9

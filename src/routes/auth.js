@@ -11,6 +11,11 @@ router.post('/register', async (req, res) => {
   const email = (req.body.email || '').trim().toLowerCase();
 
   try {
+    // البائعون يجب أن يكونوا داخل سوريا
+    if (user_type === 'seller' && governorate === 'خارج سوريا') {
+      return res.status(400).json({ error: 'البائعون يجب أن يكونوا داخل سوريا' });
+    }
+
     // Check email exists
     const exists = await db.query('SELECT id FROM users WHERE LOWER(email) = $1', [email]);
     if (exists.rows.length > 0)
@@ -208,7 +213,7 @@ router.post('/avatar', auth(), upload.single('avatar'), async (req, res) => {
 // PUT /api/auth/me
 router.put('/me', auth(), async (req, res) => {
   try {
-    const { name, phone, email } = req.body;
+    const { name, phone, email, governorate } = req.body;
     const fields = [];
     const vals = [];
 
@@ -223,6 +228,15 @@ router.put('/me', auth(), async (req, res) => {
       if (exists.rows.length) return res.status(400).json({ error: 'البريد الإلكتروني مستخدم من حساب آخر' });
       vals.push(newEmail);
       fields.push(`email=$${vals.length}`);
+    }
+    if (governorate !== undefined) {
+      const gov = (governorate || '').trim();
+      // البائعون يجب أن يكونوا داخل سوريا
+      if (gov === 'خارج سوريا' && req.user.user_type === 'seller') {
+        return res.status(400).json({ error: 'البائعون يجب أن يكونوا داخل سوريا' });
+      }
+      vals.push(gov);
+      fields.push(`governorate=$${vals.length}`);
     }
 
     if (!fields.length) return res.status(400).json({ error: 'لا توجد بيانات للتحديث' });
