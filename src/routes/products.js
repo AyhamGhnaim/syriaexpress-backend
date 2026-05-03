@@ -171,7 +171,7 @@ router.put('/:id', auth(['seller']), async (req, res) => {
     if (!seller.rows.length) return res.status(403).json({ error: 'غير مصرح' });
 
     const fields = ['name_ar','name_en','description_ar','description_en',
-                    'min_order_quantity','unit','price','stock_quantity','ship_inside','ship_outside',
+                    'min_order_quantity','unit','price','ship_inside','ship_outside',
                     'ship_international','ship_price_inside','ship_price_outside',
                     'ship_price_intl','status','category_id'];
 
