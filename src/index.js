@@ -20,7 +20,7 @@ app.use(express.urlencoded({ extended: true }));
 const baseLimit = {
   standardHeaders: true,
   legacyHeaders: false,
-  skip: (req) => req.path === '/api/health'
+  skip: (req) => req.path === '/health'
 };
 
 // 1) عام لكل /api — يسمح بتصفح مريح
@@ -40,11 +40,12 @@ const loginLimiter = rateLimit({
   message: { error: 'محاولات دخول كثيرة، انتظر 15 دقيقة' }
 });
 
-// 3) register — منع spam حسابات
+// 3) register — منع spam، يتجاهل التسجيل الناجح
 const registerLimiter = rateLimit({
   ...baseLimit,
   windowMs: 60 * 60 * 1000,
   max: 5,
+  skipSuccessfulRequests: true,
   message: { error: 'عدد كبير من محاولات التسجيل، انتظر ساعة' }
 });
 
@@ -53,6 +54,7 @@ const passwordLimiter = rateLimit({
   ...baseLimit,
   windowMs: 15 * 60 * 1000,
   max: 5,
+  skipSuccessfulRequests: true,
   message: { error: 'محاولات كثيرة لتغيير كلمة السر، انتظر 15 دقيقة' }
 });
 
