@@ -120,6 +120,18 @@ app.listen(PORT, () => {
   console.log(`🚀 SyriaExpress API running on port ${PORT}`);
   console.log(`📡 Health: http://localhost:${PORT}/api/health`);
 
+  // ─── Auto-migration: ensure products.status accepts 'inactive' ───
+  (async () => {
+    try {
+      const db = require('./config/db');
+      await db.query(`ALTER TABLE products DROP CONSTRAINT IF EXISTS products_status_check`);
+      await db.query(`ALTER TABLE products ADD CONSTRAINT products_status_check CHECK (status IN ('active','inactive','archived','draft','pending'))`);
+      console.log('✅ products_status_check constraint updated');
+    } catch (e) {
+      console.error('⚠️ migration error:', e.message);
+    }
+  })();
+
   // ─── Self-ping كل 14 دقيقة لمنع نوم Render ────────────
   if (process.env.NODE_ENV === 'production') {
     setInterval(() => {
