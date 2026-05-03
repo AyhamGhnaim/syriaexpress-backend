@@ -35,7 +35,6 @@ router.get('/', async (req, res) => {
     params.push(limit, offset);
     const query = `
       SELECT v.*, s.logo_url as seller_logo_url,
-             s.governorate as seller_governorate,
              p.outside_governorates as outside_governorates
       FROM v_products_full v
       LEFT JOIN sellers s ON s.id = v.seller_id
@@ -106,7 +105,6 @@ router.get('/:id', async (req, res) => {
               s.verification_status as seller_verification_status,
               c.name_ar as category_name_ar, c.slug as category_slug,
               u.phone as seller_phone, u.email as seller_email,
-              p.outside_governorates as outside_governorates,
               (SELECT COUNT(*) FROM products p2 WHERE p2.seller_id = s.id AND p2.status = 'active') as active_products,
               (SELECT COUNT(*) FROM orders o WHERE o.seller_id = s.id AND o.status = 'completed') as completed_orders
        FROM products p
