@@ -81,6 +81,19 @@ router.get('/my', auth(['seller']), async (req, res) => {
 // ─── GET single product ──────────────────────────────────
 router.get('/:id', async (req, res) => {
   try {
+    // إذا كان البائع يطلب منتجه، نسمح بأي حالة غير archived
+    let statusCondition = `p.status = 'active'`;
+    let token = req.headers.authorization?.split(' ')[1];
+    if (token) {
+      try {
+        const jwt = require('jsonwebtoken');
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        if (decoded.user_type === 'seller' || decoded.user_type === 'admin') {
+          statusCondition = `p.status != 'archived'`;
+        }
+      } catch(e) {}
+    }
+
     const result = await db.query(
       `SELECT p.*, s.company_name_ar, s.company_name_en, s.partner_tier,
               s.governorate as seller_governorate, s.description as seller_description,
@@ -94,7 +107,7 @@ router.get('/:id', async (req, res) => {
        JOIN sellers s ON p.seller_id = s.id
        JOIN categories c ON p.category_id = c.id
        JOIN users u ON s.user_id = u.id
-       WHERE p.id = $1 AND p.status = 'active'`,
+       WHERE p.id = $1 AND ${statusCondition}`,
       [req.params.id]
     );
 
