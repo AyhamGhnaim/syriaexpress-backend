@@ -7,8 +7,9 @@ const db      = require('../config/db');
 // ─── Register ───────────────────────────────────────────
 // POST /api/auth/register
 router.post('/register', async (req, res) => {
-  const { name, phone, password, user_type, governorate } = req.body;
+  const { name, phone, password, user_type } = req.body;
   const email = (req.body.email || '').trim().toLowerCase();
+  const governorate = (req.body.governorate || '').trim();
 
   try {
     // البائعون يجب أن يكونوا داخل سوريا

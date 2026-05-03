@@ -82,7 +82,8 @@ router.get('/me', auth(['seller']), async (req, res) => {
 // PUT /api/sellers/me — update seller profile
 router.put('/me', auth(['seller']), async (req, res) => {
   try {
-    const { company_name_ar, company_name_en, activity_type, governorate, address, description, established_year, phone, logo_url } = req.body;
+    const { company_name_ar, company_name_en, activity_type, address, description, established_year, phone, logo_url } = req.body;
+    const governorate = (req.body.governorate || '').trim();
 
     // البائعون يجب أن يكونوا داخل سوريا
     if (governorate === 'خارج سوريا') {
