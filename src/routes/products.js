@@ -34,9 +34,12 @@ router.get('/', async (req, res) => {
 
     params.push(limit, offset);
     const query = `
-      SELECT v.*, s.logo_url as seller_logo_url
+      SELECT v.*, s.logo_url as seller_logo_url,
+             s.governorate as seller_governorate,
+             p.outside_governorates as outside_governorates
       FROM v_products_full v
       LEFT JOIN sellers s ON s.id = v.seller_id
+      LEFT JOIN products p ON p.id = v.id
       ${whereClause}
       ORDER BY v.partner_tier = 'gold' DESC, v.partner_tier = 'silver' DESC, v.views_count DESC
       LIMIT $${params.length - 1} OFFSET $${params.length}
@@ -103,6 +106,7 @@ router.get('/:id', async (req, res) => {
               s.verification_status as seller_verification_status,
               c.name_ar as category_name_ar, c.slug as category_slug,
               u.phone as seller_phone, u.email as seller_email,
+              p.outside_governorates as outside_governorates,
               (SELECT COUNT(*) FROM products p2 WHERE p2.seller_id = s.id AND p2.status = 'active') as active_products,
               (SELECT COUNT(*) FROM orders o WHERE o.seller_id = s.id AND o.status = 'completed') as completed_orders
        FROM products p
@@ -150,7 +154,8 @@ router.post('/', auth(['seller']), async (req, res) => {
   description_en,
   min_order_quantity, unit, price,
   ship_inside, ship_outside, ship_international,
-  ship_price_inside, ship_price_outside, ship_price_intl
+  ship_price_inside, ship_price_outside, ship_price_intl,
+  outside_governorates
 } = req.body;
 
     const seller = await db.query('SELECT id, verification_status FROM sellers WHERE user_id = $1', [req.user.id]);
@@ -158,17 +163,22 @@ router.post('/', auth(['seller']), async (req, res) => {
     if (seller.rows[0].verification_status === 'rejected') return res.status(403).json({ error: 'تم رفض طلب توثيقك — لا يمكنك إضافة منتجات' });
     if (seller.rows[0].verification_status !== 'verified') return res.status(403).json({ error: 'حسابك قيد المراجعة — يمكنك إضافة المنتجات بعد قبول التوثيق' });
 
+    // Normalize outside_governorates to a clean string array
+    const govList = Array.isArray(outside_governorates)
+      ? outside_governorates.filter(g => typeof g === 'string' && g.trim()).map(g => g.trim())
+      : [];
+
     const result = await db.query(
       `INSERT INTO products
       (seller_id, category_id, name_ar, name_en, description_ar, description_en,
       min_order_quantity, unit, price, ship_inside, ship_outside, ship_international,
-      ship_price_inside, ship_price_outside, ship_price_intl, status)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'active')
+      ship_price_inside, ship_price_outside, ship_price_intl, outside_governorates, status)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'active')
       RETURNING *`,
       [seller.rows[0].id, category_id, name_ar, name_en, description_ar, description_en,
      min_order_quantity || 1, unit || 'كرتون', parseFloat(price) || 0,
       ship_inside || true, ship_outside || false, ship_international || false,
-      ship_price_inside, ship_price_outside, ship_price_intl]
+      ship_price_inside, ship_price_outside, ship_price_intl, govList]
     );
 
     res.status(201).json({ message: 'تم إضافة المنتج', product: result.rows[0] });
@@ -188,13 +198,21 @@ router.put('/:id', auth(['seller']), async (req, res) => {
     const fields = ['name_ar','name_en','description_ar','description_en',
                     'min_order_quantity','unit','price','ship_inside','ship_outside',
                     'ship_international','ship_price_inside','ship_price_outside',
-                    'ship_price_intl','status','category_id'];
+                    'ship_price_intl','status','category_id','outside_governorates'];
 
     const updates = [];
     const values  = [];
     fields.forEach(f => {
       if (req.body[f] !== undefined) {
-        values.push(req.body[f]);
+        // Normalize outside_governorates if present
+        if (f === 'outside_governorates') {
+          const arr = Array.isArray(req.body[f])
+            ? req.body[f].filter(g => typeof g === 'string' && g.trim()).map(g => g.trim())
+            : [];
+          values.push(arr);
+        } else {
+          values.push(req.body[f]);
+        }
         updates.push(`${f} = $${values.length}`);
       }
     });
