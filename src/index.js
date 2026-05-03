@@ -123,7 +123,6 @@ app.listen(PORT, () => {
   // ─── Auto-migration: ensure products.status accepts 'inactive' ───
   (async () => {
     try {
-      const db = require('./config/db');
       await db.query(`ALTER TABLE products DROP CONSTRAINT IF EXISTS products_status_check`);
       await db.query(`ALTER TABLE products ADD CONSTRAINT products_status_check CHECK (status IN ('active','inactive','archived','draft','pending'))`);
       console.log('✅ products_status_check constraint updated');

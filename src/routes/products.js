@@ -16,18 +16,18 @@ router.get('/', async (req, res) => {
 
     if (category) {
       params.push(category);
-      where.push(`category_slug = $${params.length}`);
+      where.push(`v.category_slug = $${params.length}`);
     }
     if (governorate) {
       params.push(governorate);
-      where.push(`seller_governorate = $${params.length}`);
+      where.push(`v.seller_governorate = $${params.length}`);
     }
-    if (shipping === 'inside')        where.push('ship_inside = true');
-    if (shipping === 'outside')       where.push('ship_outside = true');
-    if (shipping === 'international') where.push('ship_international = true');
+    if (shipping === 'inside')        where.push('v.ship_inside = true');
+    if (shipping === 'outside')       where.push('v.ship_outside = true');
+    if (shipping === 'international') where.push('v.ship_international = true');
     if (search) {
       params.push(`%${search}%`);
-      where.push(`(name_ar ILIKE $${params.length} OR name_en ILIKE $${params.length} OR company_name_ar ILIKE $${params.length})`);
+      where.push(`(v.name_ar ILIKE $${params.length} OR v.name_en ILIKE $${params.length} OR v.company_name_ar ILIKE $${params.length})`);
     }
 
     const whereClause = where.length > 0 ? 'WHERE ' + where.join(' AND ') : '';
