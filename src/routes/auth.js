@@ -54,7 +54,7 @@ router.post('/register', async (req, res) => {
 
     // Generate token
     const token = jwt.sign(
-      { id: user.id, email: user.email, user_type: user.user_type },
+      { id: user.id, email: user.email, user_type: user.user_type, governorate: user.governorate },
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
     );
@@ -89,7 +89,7 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'البريد أو كلمة المرور غير صحيحة' });
 
     const token = jwt.sign(
-      { id: user.id, email: user.email, user_type: user.user_type },
+      { id: user.id, email: user.email, user_type: user.user_type, governorate: user.governorate },
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
     );
