@@ -18,13 +18,25 @@ router.get('/', async (req, res) => {
       params.push(category);
       where.push(`v.category_slug = $${params.length}`);
     }
-    if (governorate) {
+    if (shipping === 'inside' && governorate) {
       params.push(governorate);
-      where.push(`v.seller_governorate = $${params.length}`);
+      where.push(`(v.ship_inside = true AND v.seller_governorate = $${params.length})`);
+    } else if (shipping === 'inside') {
+      where.push('v.ship_inside = true');
+    } else if (shipping === 'outside' && governorate) {
+      params.push(governorate);
+      where.push(`(v.ship_outside = true AND $${params.length} = ANY(v.outside_governorates))`);
+    } else if (shipping === 'outside') {
+      where.push('v.ship_outside = true');
+    } else if (shipping === 'international') {
+      where.push('v.ship_international = true');
+    } else if (governorate) {
+      params.push(governorate);
+      where.push(`(
+        (v.ship_inside = true AND v.seller_governorate = $${params.length}) OR
+        (v.ship_outside = true AND $${params.length} = ANY(v.outside_governorates))
+      )`);
     }
-    if (shipping === 'inside')        where.push('v.ship_inside = true');
-    if (shipping === 'outside')       where.push('v.ship_outside = true');
-    if (shipping === 'international') where.push('v.ship_international = true');
     if (search) {
       params.push(`%${search}%`);
       where.push(`(v.name_ar ILIKE $${params.length} OR v.name_en ILIKE $${params.length} OR v.company_name_ar ILIKE $${params.length})`);
