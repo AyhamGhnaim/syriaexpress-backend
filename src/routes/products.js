@@ -25,7 +25,7 @@ router.get('/', async (req, res) => {
       where.push('v.ship_inside = true');
     } else if (shipping === 'outside' && governorate) {
       params.push(governorate);
-      where.push(`(v.ship_outside = true AND $${params.length} = ANY(v.outside_governorates))`);
+      where.push(`(v.ship_outside = true AND $${params.length} = ANY(p.outside_governorates))`);
     } else if (shipping === 'outside') {
       where.push('v.ship_outside = true');
     } else if (shipping === 'international') {
@@ -34,7 +34,7 @@ router.get('/', async (req, res) => {
       params.push(governorate);
       where.push(`(
         (v.ship_inside = true AND v.seller_governorate = $${params.length}) OR
-        (v.ship_outside = true AND $${params.length} = ANY(v.outside_governorates))
+        (v.ship_outside = true AND $${params.length} = ANY(p.outside_governorates))
       )`);
     }
     if (search) {
@@ -59,7 +59,7 @@ router.get('/', async (req, res) => {
     const result = await db.query(query, params);
 
     const countResult = await db.query(
-      `SELECT COUNT(*) FROM v_products_full v LEFT JOIN sellers s ON s.id = v.seller_id ${whereClause}`,
+      `SELECT COUNT(*) FROM v_products_full v LEFT JOIN sellers s ON s.id = v.seller_id LEFT JOIN products p ON p.id = v.id ${whereClause}`,
       params.slice(0, -2)
     );
 
