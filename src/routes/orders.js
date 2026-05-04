@@ -20,40 +20,57 @@ router.post('/', auth(['buyer']), async (req, res) => {
     if (quantity < p.min_order_quantity)
       return res.status(400).json({ error: `الحد الأدنى للطلب هو ${p.min_order_quantity} ${p.unit}` });
 
-    // جلب محافظة المشتري للتحقق من صلاحية الشحن
+    // جلب محافظة المشتري
     const buyerRow = await db.query('SELECT governorate FROM users WHERE id = $1', [req.user.id]);
     const buyerGov = buyerRow.rows[0]?.governorate || '';
 
-    // تحقق من أن نوع الشحن المختار يصل لمحافظة المشتري
-    if (shipping_type === 'inside') {
-      if (!p.ship_inside) return res.status(400).json({ error: 'هذا المنتج لا يدعم الشحن الداخلي' });
-      if (buyerGov && p.seller_governorate !== undefined && p.seller_governorate !== buyerGov) {
-        return res.status(400).json({ error: `الشحن الداخلي متاح فقط داخل محافظة ${p.seller_governorate}` });
+    // ترجمة to_buyer → inside أو outside حسب محافظة البائع
+    let resolved_shipping = shipping_type;
+    if (shipping_type === 'to_buyer') {
+      const sameGov = buyerGov && p.seller_governorate === buyerGov;
+      if (sameGov && p.ship_inside) {
+        resolved_shipping = 'inside';
+      } else if (p.ship_outside) {
+        if (buyerGov && Array.isArray(p.outside_governorates) && p.outside_governorates.length > 0) {
+          if (!p.outside_governorates.includes(buyerGov))
+            return res.status(400).json({ error: `هذا المنتج لا يشحن إلى محافظة ${buyerGov}` });
+        }
+        resolved_shipping = 'outside';
+      } else if (p.ship_inside) {
+        resolved_shipping = 'inside';
+      } else {
+        return res.status(400).json({ error: `لا يوجد شحن متاح إلى محافظة ${buyerGov}` });
       }
     }
-    if (shipping_type === 'outside') {
+
+    // تحقق من صلاحية الشحن
+    if (resolved_shipping === 'inside') {
+      if (!p.ship_inside) return res.status(400).json({ error: 'هذا المنتج لا يدعم الشحن الداخلي' });
+      if (buyerGov && p.seller_governorate && p.seller_governorate !== buyerGov)
+        return res.status(400).json({ error: `الشحن الداخلي متاح فقط داخل محافظة ${p.seller_governorate}` });
+    }
+    if (resolved_shipping === 'outside') {
       if (!p.ship_outside) return res.status(400).json({ error: 'هذا المنتج لا يدعم الشحن خارج المحافظة' });
       if (buyerGov && Array.isArray(p.outside_governorates) && p.outside_governorates.length > 0) {
-        if (!p.outside_governorates.includes(buyerGov)) {
+        if (!p.outside_governorates.includes(buyerGov))
           return res.status(400).json({ error: `هذا المنتج لا يشحن إلى محافظة ${buyerGov}` });
-        }
       }
     }
-    if (shipping_type === 'international') {
+    if (resolved_shipping === 'international') {
       if (!p.ship_international) return res.status(400).json({ error: 'هذا المنتج لا يدعم الشحن الدولي' });
     }
 
     // Calculate shipping price
     let shipping_price = 0;
-    if (shipping_type === 'inside')        shipping_price = p.ship_price_inside || 0;
-    if (shipping_type === 'outside')       shipping_price = p.ship_price_outside || 0;
-    if (shipping_type === 'international') shipping_price = p.ship_price_intl || 0;
+    if (resolved_shipping === 'inside')        shipping_price = p.ship_price_inside || 0;
+    if (resolved_shipping === 'outside')       shipping_price = p.ship_price_outside || 0;
+    if (resolved_shipping === 'international') shipping_price = p.ship_price_intl || 0;
 
     const result = await db.query(
       `INSERT INTO orders (buyer_id, seller_id, product_id, quantity, shipping_type, shipping_address, shipping_price, notes)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING *`,
-      [req.user.id, p.seller_id, product_id, quantity, shipping_type, shipping_address, shipping_price, notes]
+      [req.user.id, p.seller_id, product_id, quantity, resolved_shipping, shipping_address, shipping_price, notes]
     );
 
     // Notify seller
