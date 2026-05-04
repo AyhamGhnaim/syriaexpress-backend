@@ -10,7 +10,8 @@ router.post('/', auth(['buyer']), async (req, res) => {
   try {
     // Get product & seller
     const product = await db.query(
-      'SELECT p.*, s.id as seller_id FROM products p JOIN sellers s ON p.seller_id = s.id WHERE p.id = $1',
+      `SELECT p.*, s.id as seller_id, s.governorate as seller_governorate
+       FROM products p JOIN sellers s ON p.seller_id = s.id WHERE p.id = $1`,
       [product_id]
     );
     if (!product.rows.length) return res.status(404).json({ error: 'المنتج غير موجود' });
@@ -18,6 +19,29 @@ router.post('/', auth(['buyer']), async (req, res) => {
     const p = product.rows[0];
     if (quantity < p.min_order_quantity)
       return res.status(400).json({ error: `الحد الأدنى للطلب هو ${p.min_order_quantity} ${p.unit}` });
+
+    // جلب محافظة المشتري للتحقق من صلاحية الشحن
+    const buyerRow = await db.query('SELECT governorate FROM users WHERE id = $1', [req.user.id]);
+    const buyerGov = buyerRow.rows[0]?.governorate || '';
+
+    // تحقق من أن نوع الشحن المختار يصل لمحافظة المشتري
+    if (shipping_type === 'inside') {
+      if (!p.ship_inside) return res.status(400).json({ error: 'هذا المنتج لا يدعم الشحن الداخلي' });
+      if (buyerGov && p.seller_governorate !== undefined && p.seller_governorate !== buyerGov) {
+        return res.status(400).json({ error: `الشحن الداخلي متاح فقط داخل محافظة ${p.seller_governorate}` });
+      }
+    }
+    if (shipping_type === 'outside') {
+      if (!p.ship_outside) return res.status(400).json({ error: 'هذا المنتج لا يدعم الشحن خارج المحافظة' });
+      if (buyerGov && Array.isArray(p.outside_governorates) && p.outside_governorates.length > 0) {
+        if (!p.outside_governorates.includes(buyerGov)) {
+          return res.status(400).json({ error: `هذا المنتج لا يشحن إلى محافظة ${buyerGov}` });
+        }
+      }
+    }
+    if (shipping_type === 'international') {
+      if (!p.ship_international) return res.status(400).json({ error: 'هذا المنتج لا يدعم الشحن الدولي' });
+    }
 
     // Calculate shipping price
     let shipping_price = 0;
