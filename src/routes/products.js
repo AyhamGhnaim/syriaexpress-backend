@@ -18,7 +18,14 @@ router.get('/', async (req, res) => {
       params.push(category);
       where.push(`v.category_slug = $${params.length}`);
     }
-    if (shipping === 'inside' && governorate) {
+    if (shipping === 'to_buyer' && governorate) {
+      // إلى محافظة المشتري: أي منتج يصل لمحافظة المشتري (داخلي من نفس المحافظة أو خارجي ضمن قائمته)
+      params.push(governorate);
+      where.push(`(
+        (v.ship_inside = true AND v.seller_governorate = $${params.length}) OR
+        (v.ship_outside = true AND $${params.length} = ANY(p.outside_governorates))
+      )`);
+    } else if (shipping === 'inside' && governorate) {
       params.push(governorate);
       where.push(`(v.ship_inside = true AND v.seller_governorate = $${params.length})`);
     } else if (shipping === 'inside') {
