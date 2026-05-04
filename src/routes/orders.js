@@ -31,18 +31,19 @@ router.post('/', auth(['buyer']), async (req, res) => {
         return res.status(400).json({ error: 'يجب تحديد محافظتك من الملف الشخصي قبل الطلب' });
       }
       const sameGov = p.seller_governorate === buyerGov;
-      if (sameGov) {
-        // البائع بنفس محافظة المشتري → inside
-        if (!p.ship_inside) return res.status(400).json({ error: 'هذا المنتج لا يدعم الشحن لمحافظتك' });
+
+      // أولوية: نفس المحافظة → inside
+      if (sameGov && p.ship_inside) {
         resolved_shipping = 'inside';
-      } else {
-        // البائع بمحافظة أخرى → outside (لازم المحافظة بالقائمة أو القائمة فاضية)
-        if (!p.ship_outside) return res.status(400).json({ error: `هذا المنتج لا يشحن إلى محافظة ${buyerGov}` });
+      } else if (p.ship_outside) {
+        // outside: لازم المحافظة بالقائمة أو القائمة فاضية = كل المحافظات
         const list = Array.isArray(p.outside_governorates) ? p.outside_governorates : [];
         if (list.length > 0 && !list.includes(buyerGov)) {
           return res.status(400).json({ error: `هذا المنتج لا يشحن إلى محافظة ${buyerGov}` });
         }
         resolved_shipping = 'outside';
+      } else {
+        return res.status(400).json({ error: `لا يوجد شحن متاح إلى محافظة ${buyerGov}` });
       }
     }
 
