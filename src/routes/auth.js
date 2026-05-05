@@ -247,7 +247,13 @@ router.put('/me', auth(), async (req, res) => {
       `UPDATE users SET ${fields.join(',')} WHERE id=$${vals.length} RETURNING id,name,email,phone,user_type,governorate`,
       vals
     );
-    res.json({ message: 'تم تحديث البيانات بنجاح', user: result.rows[0] });
+    const updatedUser = result.rows[0];
+    const newToken = jwt.sign(
+      { id: updatedUser.id, email: updatedUser.email, user_type: updatedUser.user_type, governorate: updatedUser.governorate },
+      process.env.JWT_SECRET || 'syriaexpress_secret_2025_ayham',
+      { expiresIn: '7d' }
+    );
+    res.json({ message: 'تم تحديث البيانات بنجاح', user: updatedUser, token: newToken });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'خطأ في الخادم' });
