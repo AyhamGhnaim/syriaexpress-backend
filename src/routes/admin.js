@@ -6,6 +6,17 @@ const auth    = require('../middleware/auth');
 // All admin routes require admin role
 router.use(auth(['admin']));
 
+// مساعد تسجيل التدقيق — لا يُفشل الإجراء الأصلي أبداً
+async function logAudit(userId, action, targetType, targetId, meta) {
+  try {
+    await db.query(
+      `INSERT INTO audit_log (user_id, action, target_type, target_id, meta, created_at)
+       VALUES ($1, $2, $3, $4, $5::jsonb, NOW())`,
+      [userId, action, targetType, targetId ? String(targetId) : null, meta ? JSON.stringify(meta) : null]
+    );
+  } catch (e) { /* تجاهل: السجلّ ثانوي */ }
+}
+
 // ─── Dashboard overview ──────────────────────────────────
 // GET /api/admin/overview
 router.get('/overview', async (req, res) => {
@@ -143,6 +154,11 @@ router.patch('/verifications/:id', async (req, res) => {
       ['verification_update', msg, admin_notes || msg, req.params.id, vr.rows[0].seller_id]
     );
 
+    await logAudit(req.user.id,
+      action === 'approved' ? 'verification_approve'
+      : action === 'rejected' ? 'verification_reject' : 'verification_revision',
+      'seller', vr.rows[0].seller_id, { action, partner_tier: partner_tier || null });
+
     res.json({ message: 'تم تحديث حالة التوثيق' });
   } catch (err) {
     res.status(500).json({ error: 'خطأ في الخادم' });
@@ -186,6 +202,7 @@ router.patch('/users/:id', async (req, res) => {
     if (!['buyer','seller','admin'].includes(user_type))
       return res.status(400).json({ error: 'نوع مستخدم غير صحيح' });
     await db.query('UPDATE users SET user_type=$1 WHERE id=$2', [user_type, req.params.id]);
+    await logAudit(req.user.id, 'user_change_type', 'user', req.params.id, { user_type });
     res.json({ message: 'تم تغيير نوع المستخدم' });
   } catch (err) {
     res.status(500).json({ error: 'خطأ في الخادم' });
@@ -197,6 +214,7 @@ router.patch('/users/:id/status', async (req, res) => {
   try {
     const { is_active } = req.body;
     await db.query('UPDATE users SET is_active=$1 WHERE id=$2', [is_active, req.params.id]);
+    await logAudit(req.user.id, is_active ? 'user_activate' : 'user_suspend', 'user', req.params.id, null);
     res.json({ message: is_active ? 'تم تفعيل الحساب' : 'تم تعليق الحساب' });
   } catch (err) {
     res.status(500).json({ error: 'خطأ في الخادم' });
@@ -246,10 +264,17 @@ router.get('/settings', async (req, res) => {
 router.put('/settings/:key', async (req, res) => {
   try {
     const { value } = req.body;
-    await db.query(
+    const upd = await db.query(
       'UPDATE platform_settings SET value=$1, updated_by=$2, updated_at=NOW() WHERE key=$3',
       [value, req.user.id, req.params.key]
     );
+    if (upd.rowCount === 0) {
+      await db.query(
+        'INSERT INTO platform_settings (key, value, updated_by, updated_at) VALUES ($1, $2, $3, NOW())',
+        [req.params.key, value, req.user.id]
+      );
+    }
+    await logAudit(req.user.id, 'setting_update', 'setting', req.params.key, { value });
     res.json({ message: 'تم تحديث الإعداد' });
   } catch (err) {
     res.status(500).json({ error: 'خطأ في الخادم' });
@@ -467,6 +492,9 @@ router.patch('/products/:id/approval', async (req, res) => {
       ['product_moderation', title, body, req.params.id, upd.rows[0].seller_id]
     );
 
+    await logAudit(req.user.id, 'product_' + newStatus, 'product', req.params.id,
+      action === 'reject' ? { reason: reason.trim() } : null);
+
     res.json({ message: 'تم تحديث حالة المنتج', approval_status: newStatus });
   } catch (err) {
     res.status(500).json({ error: 'خطأ في الخادم' });
@@ -476,11 +504,23 @@ router.patch('/products/:id/approval', async (req, res) => {
 // ─── Seller performance + SLA monitoring ─────────────────
 // GET /api/admin/performance
 router.get('/performance', async (req, res) => {
-  // حدود SLA (نسخة بسيطة) — قابلة للضبط لاحقاً عبر platform_settings
-  const MAX_RESPONSE_HOURS = 6;
-  const MAX_SHIPPING_HOURS = 48;
+  // حدود SLA — تُقرأ من platform_settings مع fallback افتراضي
+  let MAX_RESPONSE_HOURS = 6;
+  let MAX_SHIPPING_HOURS = 48;
 
   try {
+    try {
+      const st = await db.query(
+        "SELECT key, value FROM platform_settings WHERE key IN ('sla_max_response_hours','sla_max_shipping_hours')"
+      );
+      st.rows.forEach(r => {
+        const n = parseInt(r.value);
+        if (!isNaN(n) && n > 0) {
+          if (r.key === 'sla_max_response_hours') MAX_RESPONSE_HOURS = n;
+          if (r.key === 'sla_max_shipping_hours') MAX_SHIPPING_HOURS = n;
+        }
+      });
+    } catch (e) { /* fallback إلى الافتراضي */ }
     // متوسطات المنصّة (محسوبة مباشرة من الطوابع — دقيقة)
     const platform = await db.query(`
       SELECT
@@ -525,6 +565,32 @@ router.get('/performance', async (req, res) => {
       topSellers: topSellers.rows,
       breaches:   breaches.rows
     });
+  } catch (err) {
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
+// ─── Audit log viewer ────────────────────────────────────
+// GET /api/admin/audit
+router.get('/audit', async (req, res) => {
+  try {
+    const { action, page = 1, limit = 50 } = req.query;
+    const params = [];
+    const where  = [];
+    if (action) { params.push(action); where.push(`a.action = $${params.length}`); }
+    const w = where.length ? 'WHERE ' + where.join(' AND ') : '';
+    params.push(limit, (page - 1) * limit);
+    const result = await db.query(
+      `SELECT a.id, a.user_id, a.action, a.target_type, a.target_id, a.meta, a.created_at,
+              u.name as actor_name, u.email as actor_email
+       FROM audit_log a
+       LEFT JOIN users u ON a.user_id = u.id
+       ${w}
+       ORDER BY a.created_at DESC
+       LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params
+    );
+    res.json({ entries: result.rows });
   } catch (err) {
     res.status(500).json({ error: 'خطأ في الخادم' });
   }
