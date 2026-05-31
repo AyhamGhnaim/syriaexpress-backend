@@ -75,6 +75,7 @@ app.use('/api/admin',         require('./routes/admin'));
 app.use('/api/reviews',       require('./routes/reviews'));
 app.use('/api/coupons',       require('./routes/coupons'));
 app.use('/api/saved',         require('./routes/saved'));
+app.use('/api/addresses',     require('./routes/addresses'));
 
 // ─── Categories (public) ─────────────────────────────────
 const db = require('./config/db');
