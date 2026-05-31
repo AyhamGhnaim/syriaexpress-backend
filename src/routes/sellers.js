@@ -227,4 +227,17 @@ router.get('/:id', async (req, res) => {
 
 
 
+// ─── GET /api/sellers/me/performance — مقاييس أداء البائع ───
+router.get('/me/performance', auth(['seller']), async (req, res) => {
+  try {
+    const seller = await db.query('SELECT id FROM sellers WHERE user_id = $1', [req.user.id]);
+    if (!seller.rows.length) return res.status(403).json({ error: 'غير مصرح' });
+    const r = await db.query('SELECT * FROM v_seller_performance WHERE seller_id = $1', [seller.rows[0].id]);
+    res.json(r.rows[0] || { avg_response_seconds: null, avg_shipping_seconds: null, avg_delivery_seconds: null });
+  } catch (err) {
+    console.error('GET /sellers/me/performance', err);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
 module.exports = router;

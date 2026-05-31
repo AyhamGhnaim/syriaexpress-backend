@@ -138,6 +138,7 @@ router.get('/my', auth(['buyer']), async (req, res) => {
               s.governorate as seller_governorate,
               p.outside_governorates as outside_governorates,
               COALESCE((SELECT image_url FROM product_images WHERE product_id = p.id AND is_primary=true LIMIT 1), p.image_url) as product_image,
+              EXISTS(SELECT 1 FROM reviews rv WHERE rv.order_id = o.id) as reviewed,
               (o.quantity * COALESCE(o.unit_price, p.price) + o.shipping_price) as total_amount
        FROM orders o
        JOIN products p ON o.product_id = p.id

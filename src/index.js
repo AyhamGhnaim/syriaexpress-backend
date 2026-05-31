@@ -72,6 +72,7 @@ app.use('/api/sellers',       require('./routes/sellers'));
 app.use('/api/cart',          require('./routes/cart'));
 app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/admin',         require('./routes/admin'));
+app.use('/api/reviews',       require('./routes/reviews'));
 
 // ─── Categories (public) ─────────────────────────────────
 const db = require('./config/db');
