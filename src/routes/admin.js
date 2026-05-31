@@ -473,4 +473,61 @@ router.patch('/products/:id/approval', async (req, res) => {
   }
 });
 
+// ─── Seller performance + SLA monitoring ─────────────────
+// GET /api/admin/performance
+router.get('/performance', async (req, res) => {
+  // حدود SLA (نسخة بسيطة) — قابلة للضبط لاحقاً عبر platform_settings
+  const MAX_RESPONSE_HOURS = 6;
+  const MAX_SHIPPING_HOURS = 48;
+
+  try {
+    // متوسطات المنصّة (محسوبة مباشرة من الطوابع — دقيقة)
+    const platform = await db.query(`
+      SELECT
+        AVG(EXTRACT(EPOCH FROM (confirmed_at - created_at)))  FILTER (WHERE confirmed_at IS NOT NULL) AS avg_response_seconds,
+        AVG(EXTRACT(EPOCH FROM (shipped_at   - confirmed_at))) FILTER (WHERE shipped_at   IS NOT NULL) AS avg_shipping_seconds,
+        AVG(EXTRACT(EPOCH FROM (delivered_at - shipped_at)))   FILTER (WHERE delivered_at IS NOT NULL) AS avg_delivery_seconds
+      FROM orders
+    `);
+
+    // أكثر البائعين أداءً (الأسرع رداً) — من v_seller_performance
+    const topSellers = await db.query(`
+      SELECT s.id, s.company_name_ar,
+             vp.avg_response_seconds, vp.avg_shipping_seconds, vp.avg_delivery_seconds,
+             (SELECT COUNT(*) FROM orders o WHERE o.seller_id = s.id) AS total_orders
+      FROM sellers s
+      JOIN v_seller_performance vp ON vp.seller_id = s.id
+      WHERE s.verification_status = 'verified'
+      ORDER BY vp.avg_response_seconds ASC NULLS LAST
+      LIMIT 10
+    `);
+
+    // طلبات تجاوزت SLA (نشطة، غير ملغاة/مسلّمة)
+    const breaches = await db.query(`
+      SELECT o.id, o.status, o.created_at, o.confirmed_at,
+             p.name_ar, s.company_name_ar,
+             CASE WHEN o.status = 'pending' THEN 'response' ELSE 'shipping' END AS breach_type,
+             EXTRACT(EPOCH FROM (NOW() - CASE WHEN o.status = 'pending' THEN o.created_at ELSE o.confirmed_at END)) AS elapsed_seconds
+      FROM orders o
+      LEFT JOIN products p ON o.product_id = p.id
+      LEFT JOIN sellers  s ON o.seller_id  = s.id
+      WHERE (
+        (o.status = 'pending'   AND o.created_at   + make_interval(hours => $1) < NOW()) OR
+        (o.status = 'confirmed' AND o.confirmed_at + make_interval(hours => $2) < NOW())
+      )
+      ORDER BY elapsed_seconds DESC
+      LIMIT 50
+    `, [MAX_RESPONSE_HOURS, MAX_SHIPPING_HOURS]);
+
+    res.json({
+      thresholds: { response_hours: MAX_RESPONSE_HOURS, shipping_hours: MAX_SHIPPING_HOURS },
+      platform:   platform.rows[0] || {},
+      topSellers: topSellers.rows,
+      breaches:   breaches.rows
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
 module.exports = router;
