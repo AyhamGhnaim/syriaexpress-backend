@@ -378,4 +378,99 @@ router.get('/orders', async (req, res) => {
   }
 });
 
+// ─── Product moderation (إشراف المنتجات) ─────────────────
+
+// GET /api/admin/products — قائمة المنتجات للإشراف (فلتر بالحالة + بحث)
+router.get('/products', async (req, res) => {
+  try {
+    const { approval, search } = req.query;
+    const params = [];
+    const where  = [`p.status != 'archived'`];
+
+    if (approval) {
+      params.push(approval);
+      where.push(`p.approval_status = $${params.length}`);
+    }
+    if (search) {
+      params.push(`%${search}%`);
+      where.push(`(p.name_ar ILIKE $${params.length} OR s.company_name_ar ILIKE $${params.length})`);
+    }
+
+    const w = 'WHERE ' + where.join(' AND ');
+    const result = await db.query(
+      `SELECT p.id, p.name_ar, p.price, p.approval_status, p.rejection_reason,
+              p.created_at, p.image_url, p.category_id,
+              c.name_ar as category_name_ar,
+              s.id as seller_id, s.company_name_ar
+       FROM products p
+       LEFT JOIN sellers    s ON p.seller_id  = s.id
+       LEFT JOIN categories c ON p.category_id = c.id
+       ${w}
+       ORDER BY (p.approval_status = 'pending') DESC, p.created_at DESC`,
+      params
+    );
+
+    // عدّادات سريعة لكل حالة
+    const counts = await db.query(
+      `SELECT approval_status, COUNT(*) as count
+       FROM products WHERE status != 'archived'
+       GROUP BY approval_status`
+    );
+
+    res.json({ products: result.rows, counts: counts.rows });
+  } catch (err) {
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
+// PATCH /api/admin/products/:id/approval — اعتماد/رفض/تعليق/إعادة للمراجعة
+router.patch('/products/:id/approval', async (req, res) => {
+  const { action, reason } = req.body;
+  const map = { approve: 'approved', reject: 'rejected', suspend: 'suspended', reset: 'pending' };
+  const newStatus = map[action];
+
+  if (!newStatus)
+    return res.status(400).json({ error: 'إجراء غير صحيح' });
+  if (action === 'reject' && (!reason || !reason.trim()))
+    return res.status(400).json({ error: 'سبب الرفض مطلوب' });
+
+  try {
+    const upd = await db.query(
+      `UPDATE products
+       SET approval_status = $1,
+           rejection_reason = $2,
+           moderated_at = NOW(),
+           moderated_by = $3
+       WHERE id = $4 AND status != 'archived'
+       RETURNING seller_id, name_ar`,
+      [newStatus, action === 'reject' ? reason.trim() : null, req.user.id, req.params.id]
+    );
+    if (!upd.rows.length)
+      return res.status(404).json({ error: 'المنتج غير موجود' });
+
+    const titleMap = {
+      approved:  'تمت الموافقة على منتجك',
+      rejected:  'تم رفض منتجك',
+      suspended: 'تم تعليق منتجك',
+      pending:   'منتجك قيد المراجعة'
+    };
+    const title = titleMap[newStatus];
+    const body  = newStatus === 'rejected'
+      ? (reason.trim())
+      : newStatus === 'approved'
+        ? `أصبح منتجك «${upd.rows[0].name_ar}» منشوراً للمشترين`
+        : title;
+
+    await db.query(
+      `INSERT INTO notifications(user_id, type, title_ar, body_ar, ref_type, ref_id)
+       SELECT s.user_id, $1, $2, $3, 'product', $4 FROM sellers s WHERE s.id = $5`,
+      ['product_moderation', title, body, req.params.id, upd.rows[0].seller_id]
+    );
+
+    res.json({ message: 'تم تحديث حالة المنتج', approval_status: newStatus });
+  } catch (err) {
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
 module.exports = router;
