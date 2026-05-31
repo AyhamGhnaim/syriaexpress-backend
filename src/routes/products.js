@@ -9,7 +9,7 @@ const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } });
 // ─── GET all active products ─────────────────────────────
 router.get('/', async (req, res) => {
   try {
-    const { category, category_id, governorate, shipping, search, min_price, max_price, sort, page = 1, limit = 20 } = req.query;
+    const { category, category_id, seller_id, governorate, shipping, search, min_price, max_price, sort, page = 1, limit = 20 } = req.query;
     const offset = (page - 1) * limit;
     const params = [];
     let where = [];
@@ -21,6 +21,10 @@ router.get('/', async (req, res) => {
     if (category_id) {
       params.push(category_id);
       where.push(`p.category_id = $${params.length}`);
+    }
+    if (seller_id) {
+      params.push(seller_id);
+      where.push(`v.seller_id = $${params.length}`);
     }
     if (shipping === 'to_buyer' && governorate) {
       // إلى محافظة المشتري: أي منتج يصل لمحافظة المشتري (داخلي من نفس المحافظة أو خارجي ضمن قائمته)
