@@ -6,7 +6,7 @@ const auth    = require('../middleware/auth');
 // ─── Create order (buyer) ────────────────────────────────
 // POST /api/orders
 router.post('/', auth(['buyer']), async (req, res) => {
-  const { product_id, quantity, shipping_type, shipping_address, notes } = req.body;
+  const { product_id, quantity, shipping_type, shipping_address, notes, coupon_code } = req.body;
   try {
     // Get product & seller
     const product = await db.query(
@@ -86,11 +86,32 @@ router.post('/', auth(['buyer']), async (req, res) => {
     );
     if (tier.rows.length) unit_price = parseFloat(tier.rows[0].unit_price);
 
+    // كوبون الخصم (يحسبه الخادم على قيمة البضاعة لهذا السطر)
+    let discount = 0, appliedCoupon = null;
+    if (coupon_code && String(coupon_code).trim()) {
+      const cp = await db.query(
+        `SELECT code, discount_type, value, min_total, active, expires_at
+         FROM coupons
+         WHERE seller_id = $1 AND lower(code) = lower($2)`,
+        [p.seller_id, String(coupon_code).trim()]
+      );
+      if (cp.rows.length) {
+        const c = cp.rows[0];
+        const valid = c.active && (!c.expires_at || new Date(c.expires_at) >= new Date());
+        const goods = quantity * unit_price;
+        if (valid && goods >= (parseFloat(c.min_total) || 0)) {
+          if (c.discount_type === 'percent') discount = Math.round(goods * parseFloat(c.value) / 100);
+          else discount = Math.min(parseFloat(c.value), goods);
+          if (discount > 0) appliedCoupon = c.code;
+        }
+      }
+    }
+
     const result = await db.query(
-      `INSERT INTO orders (buyer_id, seller_id, product_id, quantity, shipping_type, shipping_address, shipping_price, notes, unit_price)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      `INSERT INTO orders (buyer_id, seller_id, product_id, quantity, shipping_type, shipping_address, shipping_price, notes, unit_price, coupon_code, discount)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        RETURNING *`,
-      [req.user.id, p.seller_id, product_id, quantity, resolved_shipping, shipping_address, shipping_price, notes, unit_price]
+      [req.user.id, p.seller_id, product_id, quantity, resolved_shipping, shipping_address, shipping_price, notes, unit_price, appliedCoupon, discount]
     );
 
     // تنقيص المخزون (إن كان محدوداً) مع حماية من السالب
@@ -139,7 +160,7 @@ router.get('/my', auth(['buyer']), async (req, res) => {
               p.outside_governorates as outside_governorates,
               COALESCE((SELECT image_url FROM product_images WHERE product_id = p.id AND is_primary=true LIMIT 1), p.image_url) as product_image,
               EXISTS(SELECT 1 FROM reviews rv WHERE rv.order_id = o.id) as reviewed,
-              (o.quantity * COALESCE(o.unit_price, p.price) + o.shipping_price) as total_amount
+              (o.quantity * COALESCE(o.unit_price, p.price) - COALESCE(o.discount,0) + o.shipping_price) as total_amount
        FROM orders o
        JOIN products p ON o.product_id = p.id
        JOIN sellers s  ON o.seller_id  = s.id
@@ -171,7 +192,7 @@ router.get('/seller', auth(['seller']), async (req, res) => {
       `SELECT o.*, p.name_ar, p.unit, p.price,
               u.name as buyer_name, u.phone as buyer_phone, u.governorate as buyer_gov,
               COALESCE((SELECT image_url FROM product_images WHERE product_id = p.id AND is_primary=true LIMIT 1), p.image_url) as product_image,
-              (o.quantity * COALESCE(o.unit_price, p.price) + o.shipping_price) as total_amount
+              (o.quantity * COALESCE(o.unit_price, p.price) - COALESCE(o.discount,0) + o.shipping_price) as total_amount
        FROM orders o
        JOIN products p ON o.product_id = p.id
        JOIN users u    ON o.buyer_id   = u.id
@@ -251,7 +272,7 @@ router.get('/:id', auth(), async (req, res) => {
               s.company_name_ar, s.partner_tier, s.governorate as seller_gov,
               u.name as buyer_name, u.phone as buyer_phone,
               COALESCE((SELECT image_url FROM product_images WHERE product_id = p.id AND is_primary=true LIMIT 1), p.image_url) as product_image,
-              (o.quantity * COALESCE(o.unit_price, p.price) + o.shipping_price) as total_amount
+              (o.quantity * COALESCE(o.unit_price, p.price) - COALESCE(o.discount,0) + o.shipping_price) as total_amount
        FROM orders o
        JOIN products p ON o.product_id = p.id
        JOIN sellers s  ON o.seller_id  = s.id

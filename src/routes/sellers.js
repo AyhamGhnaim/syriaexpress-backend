@@ -82,7 +82,7 @@ router.get('/me', auth(['seller']), async (req, res) => {
 // PUT /api/sellers/me — update seller profile
 router.put('/me', auth(['seller']), async (req, res) => {
   try {
-    const { company_name_ar, company_name_en, activity_type, address, description, established_year, phone, logo_url } = req.body;
+    const { company_name_ar, company_name_en, activity_type, address, description, established_year, phone, logo_url, banner_url } = req.body;
     const governorate = (req.body.governorate || '').trim();
 
     // البائعون يجب أن يكونوا داخل سوريا
@@ -92,9 +92,10 @@ router.put('/me', auth(['seller']), async (req, res) => {
 
     const result = await db.query(
       `UPDATE sellers SET company_name_ar=$1, company_name_en=$2, activity_type=$3,
-       governorate=$4, address=$5, description=$6, established_year=$7, phone=$8, logo_url=$9
-       WHERE user_id=$10 RETURNING *`,
-      [company_name_ar, company_name_en, activity_type, governorate, address, description, established_year || null, phone || null, logo_url || null, req.user.id]
+       governorate=$4, address=$5, description=$6, established_year=$7, phone=$8, logo_url=$9,
+       banner_url = COALESCE($10, banner_url)
+       WHERE user_id=$11 RETURNING *`,
+      [company_name_ar, company_name_en, activity_type, governorate, address, description, established_year || null, phone || null, logo_url || null, banner_url || null, req.user.id]
     );
     res.json({ message: 'تم تحديث الملف', seller: result.rows[0] });
   } catch (err) {
@@ -226,6 +227,27 @@ router.get('/:id', async (req, res) => {
 });
 
 
+
+// ─── POST /api/sellers/me/banner — رفع بانر الصفحة العامة ───
+router.post('/me/banner', auth(['seller']), upload.single('banner'), async (req, res) => {
+  try {
+    const seller = await db.query('SELECT id FROM sellers WHERE user_id = $1', [req.user.id]);
+    if (!seller.rows.length) return res.status(403).json({ error: 'غير مصرح' });
+    if (!req.file) return res.status(400).json({ error: 'لم يتم رفع أي صورة' });
+    const uploadResult = await new Promise((resolve, reject) => {
+      const stream = cloudinary.uploader.upload_stream(
+        { folder: 'seller_banners', resource_type: 'image', transformation: [{ width: 1600, height: 500, crop: 'fill' }] },
+        (error, result) => { if (error) reject(error); else resolve(result); }
+      );
+      stream.end(req.file.buffer);
+    });
+    await db.query('UPDATE sellers SET banner_url = $1 WHERE id = $2', [uploadResult.secure_url, seller.rows[0].id]);
+    res.json({ message: 'تم رفع البانر', banner_url: uploadResult.secure_url });
+  } catch (err) {
+    console.error('POST /me/banner', err);
+    res.status(500).json({ error: 'فشل رفع البانر' });
+  }
+});
 
 // ─── GET /api/sellers/me/performance — مقاييس أداء البائع ───
 router.get('/me/performance', auth(['seller']), async (req, res) => {
