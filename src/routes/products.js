@@ -54,7 +54,8 @@ router.get('/', async (req, res) => {
     params.push(limit, offset);
     const query = `
       SELECT v.*, s.logo_url as seller_logo_url,
-             p.outside_governorates as outside_governorates
+             p.outside_governorates as outside_governorates,
+             p.stock_qty, p.in_stock
       FROM v_products_full v
       LEFT JOIN sellers s ON s.id = v.seller_id
       LEFT JOIN products p ON p.id = v.id
@@ -149,12 +150,18 @@ router.get('/:id', async (req, res) => {
       [result.rows[0].seller_id]
     );
 
+    const tiers = await db.query(
+      'SELECT id, min_qty, unit_price FROM price_tiers WHERE product_id = $1 ORDER BY min_qty ASC',
+      [req.params.id]
+    );
+
     await db.query('UPDATE products SET views_count = views_count + 1 WHERE id = $1', [req.params.id]);
 
     res.json({
       ...result.rows[0],
       images: images.rows,
-      reviews: reviews.rows
+      reviews: reviews.rows,
+      price_tiers: tiers.rows
     });
 
   } catch (err) {
@@ -172,7 +179,8 @@ router.post('/', auth(['seller']), async (req, res) => {
   min_order_quantity, unit, price,
   ship_inside, ship_outside, ship_international,
   ship_price_inside, ship_price_outside, ship_price_intl,
-  outside_governorates
+  outside_governorates,
+  stock_qty, low_stock_threshold, price_tiers
 } = req.body;
 
     const seller = await db.query('SELECT id, verification_status FROM sellers WHERE user_id = $1', [req.user.id]);
@@ -185,20 +193,42 @@ router.post('/', auth(['seller']), async (req, res) => {
       ? outside_governorates.filter(g => typeof g === 'string' && g.trim()).map(g => g.trim())
       : [];
 
+    const sQty = (stock_qty === '' || stock_qty === undefined || stock_qty === null) ? null : parseInt(stock_qty);
+    const lowT = (low_stock_threshold === '' || low_stock_threshold === undefined || low_stock_threshold === null) ? null : parseInt(low_stock_threshold);
+    const inStock = sQty === null ? true : sQty > 0;
+
     const result = await db.query(
       `INSERT INTO products
       (seller_id, category_id, name_ar, name_en, description_ar, description_en,
       min_order_quantity, unit, price, ship_inside, ship_outside, ship_international,
-      ship_price_inside, ship_price_outside, ship_price_intl, outside_governorates, status)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'active')
+      ship_price_inside, ship_price_outside, ship_price_intl, outside_governorates, status,
+      stock_qty, in_stock, low_stock_threshold)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'active',$17,$18,$19)
       RETURNING *`,
       [seller.rows[0].id, category_id, name_ar, name_en, description_ar, description_en,
      min_order_quantity || 1, unit || 'كرتون', parseFloat(price) || 0,
       ship_inside || true, ship_outside || false, ship_international || false,
-      ship_price_inside, ship_price_outside, ship_price_intl, govList]
+      ship_price_inside, ship_price_outside, ship_price_intl, govList,
+      sQty, inStock, lowT]
     );
 
-    res.status(201).json({ message: 'تم إضافة المنتج', product: result.rows[0] });
+    const newProduct = result.rows[0];
+
+    // شرائح التسعير (اختياري)
+    if (Array.isArray(price_tiers) && price_tiers.length) {
+      for (const t of price_tiers) {
+        const mq = parseInt(t.min_qty);
+        const up = parseFloat(t.unit_price);
+        if (mq > 0 && up >= 0) {
+          await db.query(
+            'INSERT INTO price_tiers (product_id, min_qty, unit_price) VALUES ($1,$2,$3)',
+            [newProduct.id, mq, up]
+          );
+        }
+      }
+    }
+
+    res.status(201).json({ message: 'تم إضافة المنتج', product: newProduct });
 
   } catch (err) {
     console.error(err);
@@ -234,15 +264,52 @@ router.put('/:id', auth(['seller']), async (req, res) => {
       }
     });
 
-    if (!updates.length) return res.status(400).json({ error: 'لا يوجد بيانات للتحديث' });
+    // المخزون: مزامنة in_stock تلقائياً
+    if (req.body.stock_qty !== undefined) {
+      const sQty = (req.body.stock_qty === '' || req.body.stock_qty === null) ? null : parseInt(req.body.stock_qty);
+      values.push(sQty); updates.push(`stock_qty = $${values.length}`);
+      values.push(sQty === null ? true : sQty > 0); updates.push(`in_stock = $${values.length}`);
+    }
+    if (req.body.low_stock_threshold !== undefined) {
+      const lowT = (req.body.low_stock_threshold === '' || req.body.low_stock_threshold === null) ? null : parseInt(req.body.low_stock_threshold);
+      values.push(lowT); updates.push(`low_stock_threshold = $${values.length}`);
+    }
 
-    values.push(req.params.id, seller.rows[0].id);
-    const result = await db.query(
-      `UPDATE products SET ${updates.join(',')} WHERE id = $${values.length-1} AND seller_id = $${values.length} RETURNING *`,
-      values
-    );
+    if (!updates.length && req.body.price_tiers === undefined)
+      return res.status(400).json({ error: 'لا يوجد بيانات للتحديث' });
+
+    let result;
+    if (updates.length) {
+      values.push(req.params.id, seller.rows[0].id);
+      result = await db.query(
+        `UPDATE products SET ${updates.join(',')} WHERE id = $${values.length-1} AND seller_id = $${values.length} RETURNING *`,
+        values
+      );
+    } else {
+      // تعديل الشرائح فقط — نتحقق من ملكية المنتج
+      result = await db.query(
+        'SELECT * FROM products WHERE id = $1 AND seller_id = $2',
+        [req.params.id, seller.rows[0].id]
+      );
+    }
 
     if (!result.rows.length) return res.status(404).json({ error: 'المنتج غير موجود' });
+
+    // مزامنة شرائح التسعير (استبدال كامل)
+    if (Array.isArray(req.body.price_tiers)) {
+      await db.query('DELETE FROM price_tiers WHERE product_id = $1', [req.params.id]);
+      for (const t of req.body.price_tiers) {
+        const mq = parseInt(t.min_qty);
+        const up = parseFloat(t.unit_price);
+        if (mq > 0 && up >= 0) {
+          await db.query(
+            'INSERT INTO price_tiers (product_id, min_qty, unit_price) VALUES ($1,$2,$3)',
+            [req.params.id, mq, up]
+          );
+        }
+      }
+    }
+
     res.json({ message: 'تم تحديث المنتج', product: result.rows[0] });
 
   } catch (err) {

@@ -20,6 +20,12 @@ router.post('/', auth(['buyer']), async (req, res) => {
     if (quantity < p.min_order_quantity)
       return res.status(400).json({ error: `الحد الأدنى للطلب هو ${p.min_order_quantity} ${p.unit}` });
 
+    // تحقق المخزون (المنتج بمخزون محدود)
+    if (p.in_stock === false)
+      return res.status(400).json({ error: 'هذا المنتج غير متوفر حالياً' });
+    if (p.stock_qty !== null && p.stock_qty !== undefined && quantity > p.stock_qty)
+      return res.status(400).json({ error: `الكمية المتوفرة فقط ${p.stock_qty} ${p.unit}` });
+
     // جلب محافظة المشتري
     const buyerRow = await db.query('SELECT governorate FROM users WHERE id = $1', [req.user.id]);
     const buyerGov = buyerRow.rows[0]?.governorate || '';
@@ -70,12 +76,33 @@ router.post('/', auth(['buyer']), async (req, res) => {
     if (resolved_shipping === 'outside')       shipping_price = p.ship_price_outside || 0;
     if (resolved_shipping === 'international') shipping_price = p.ship_price_intl || 0;
 
-    const result = await db.query(
-      `INSERT INTO orders (buyer_id, seller_id, product_id, quantity, shipping_type, shipping_address, shipping_price, notes)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-       RETURNING *`,
-      [req.user.id, p.seller_id, product_id, quantity, resolved_shipping, shipping_address, shipping_price, notes]
+    // سعر الوحدة الفعّال حسب شرائح التسعير (أكبر min_qty لا يتجاوز الكمية)
+    let unit_price = parseFloat(p.price) || 0;
+    const tier = await db.query(
+      `SELECT unit_price FROM price_tiers
+       WHERE product_id = $1 AND min_qty <= $2
+       ORDER BY min_qty DESC LIMIT 1`,
+      [product_id, quantity]
     );
+    if (tier.rows.length) unit_price = parseFloat(tier.rows[0].unit_price);
+
+    const result = await db.query(
+      `INSERT INTO orders (buyer_id, seller_id, product_id, quantity, shipping_type, shipping_address, shipping_price, notes, unit_price)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       RETURNING *`,
+      [req.user.id, p.seller_id, product_id, quantity, resolved_shipping, shipping_address, shipping_price, notes, unit_price]
+    );
+
+    // تنقيص المخزون (إن كان محدوداً) مع حماية من السالب
+    if (p.stock_qty !== null && p.stock_qty !== undefined) {
+      await db.query(
+        `UPDATE products
+         SET stock_qty = GREATEST(stock_qty - $1, 0),
+             in_stock  = (GREATEST(stock_qty - $1, 0) > 0)
+         WHERE id = $2`,
+        [quantity, product_id]
+      );
+    }
 
     // Notify seller
     await db.query(
@@ -111,7 +138,7 @@ router.get('/my', auth(['buyer']), async (req, res) => {
               s.governorate as seller_governorate,
               p.outside_governorates as outside_governorates,
               COALESCE((SELECT image_url FROM product_images WHERE product_id = p.id AND is_primary=true LIMIT 1), p.image_url) as product_image,
-              (o.quantity * p.price + o.shipping_price) as total_amount
+              (o.quantity * COALESCE(o.unit_price, p.price) + o.shipping_price) as total_amount
        FROM orders o
        JOIN products p ON o.product_id = p.id
        JOIN sellers s  ON o.seller_id  = s.id
@@ -143,7 +170,7 @@ router.get('/seller', auth(['seller']), async (req, res) => {
       `SELECT o.*, p.name_ar, p.unit, p.price,
               u.name as buyer_name, u.phone as buyer_phone, u.governorate as buyer_gov,
               COALESCE((SELECT image_url FROM product_images WHERE product_id = p.id AND is_primary=true LIMIT 1), p.image_url) as product_image,
-              (o.quantity * p.price + o.shipping_price) as total_amount
+              (o.quantity * COALESCE(o.unit_price, p.price) + o.shipping_price) as total_amount
        FROM orders o
        JOIN products p ON o.product_id = p.id
        JOIN users u    ON o.buyer_id   = u.id
@@ -197,6 +224,18 @@ router.patch('/:id/status', auth(['seller','admin','buyer']), async (req, res) =
     const result = await db.query(query, params);
 
     if (!result.rows.length) return res.status(404).json({ error: 'الطلب غير موجود أو لا يمكن إلغاؤه' });
+
+    // استرجاع المخزون عند الإلغاء (للمنتجات بمخزون محدود)
+    if (status === 'cancelled') {
+      const o = result.rows[0];
+      await db.query(
+        `UPDATE products
+         SET stock_qty = stock_qty + $1, in_stock = true
+         WHERE id = $2 AND stock_qty IS NOT NULL`,
+        [o.quantity, o.product_id]
+      );
+    }
+
     res.json({ message: 'تم تحديث حالة الطلب', order: result.rows[0] });
   } catch (err) {
     res.status(500).json({ error: 'خطأ في الخادم' });
@@ -211,7 +250,7 @@ router.get('/:id', auth(), async (req, res) => {
               s.company_name_ar, s.partner_tier, s.governorate as seller_gov,
               u.name as buyer_name, u.phone as buyer_phone,
               COALESCE((SELECT image_url FROM product_images WHERE product_id = p.id AND is_primary=true LIMIT 1), p.image_url) as product_image,
-              (o.quantity * p.price + o.shipping_price) as total_amount
+              (o.quantity * COALESCE(o.unit_price, p.price) + o.shipping_price) as total_amount
        FROM orders o
        JOIN products p ON o.product_id = p.id
        JOIN sellers s  ON o.seller_id  = s.id
