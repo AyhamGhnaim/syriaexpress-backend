@@ -10,9 +10,11 @@ router.use(auth(['admin']));
 // GET /api/admin/overview
 router.get('/overview', async (req, res) => {
   try {
-    const [users, sellers, orders, pending] = await Promise.all([
+    const [users, totalUsers, sellers, pendingSellers, orders, pending] = await Promise.all([
       db.query("SELECT COUNT(*) FROM users WHERE user_type='buyer'"),
+      db.query("SELECT COUNT(*) FROM users"),
       db.query("SELECT COUNT(*) FROM sellers WHERE verification_status='verified'"),
+      db.query("SELECT COUNT(*) FROM sellers WHERE verification_status NOT IN ('verified','rejected')"),
       db.query("SELECT COUNT(*) FROM orders"),
       db.query("SELECT COUNT(*) FROM verification_requests WHERE status='pending'")
     ]);
@@ -55,7 +57,9 @@ router.get('/overview', async (req, res) => {
     res.json({
       stats: {
         buyers:           parseInt(users.rows[0].count),
+        total_users:      parseInt(totalUsers.rows[0].count),
         verified_sellers: parseInt(sellers.rows[0].count),
+        pending_sellers:  parseInt(pendingSellers.rows[0].count),
         total_orders:     parseInt(orders.rows[0].count),
         pending_verif:    parseInt(pending.rows[0].count),
         total_revenue:    gmv,
@@ -369,74 +373,6 @@ router.get('/orders', async (req, res) => {
        ORDER BY o.created_at DESC`
     );
     res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: 'خطأ في الخادم' });
-  }
-});
-
-// ─── Categories Admin ─────────────────────────────────────
-
-// GET /api/admin/categories — all categories including inactive
-router.get('/categories', async (req, res) => {
-  try {
-    const result = await db.query(
-      `SELECT id, name_ar, name_en, slug, status, icon, sort_order
-       FROM categories ORDER BY sort_order`
-    );
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: 'خطأ في الخادم' });
-  }
-});
-
-// POST /api/admin/categories — add new category
-router.post('/categories', async (req, res) => {
-  const { name_ar, name_en, status, icon } = req.body;
-  if (!name_ar) return res.status(400).json({ error: 'اسم الفئة مطلوب' });
-  try {
-    const slug = name_ar.replace(/\s+/g, '-').toLowerCase() + '-' + Date.now();
-    const maxOrder = await db.query('SELECT COALESCE(MAX(sort_order), 0) as max FROM categories');
-    const sort_order = maxOrder.rows[0].max + 1;
-    const result = await db.query(
-      `INSERT INTO categories (name_ar, name_en, slug, status, icon, sort_order)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [name_ar, name_en || name_ar, slug, status || 'available', icon || '📦', sort_order]
-    );
-    res.status(201).json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: 'خطأ في الخادم' });
-  }
-});
-
-// PATCH /api/admin/categories/:id — update category
-router.patch('/categories/:id', async (req, res) => {
-  const { name_ar, name_en, status, icon, sort_order } = req.body;
-  try {
-    const fields = [];
-    const vals = [];
-    if (name_ar !== undefined) { vals.push(name_ar); fields.push(`name_ar=$${vals.length}`); }
-    if (name_en !== undefined) { vals.push(name_en); fields.push(`name_en=$${vals.length}`); }
-    if (status !== undefined)  { vals.push(status);  fields.push(`status=$${vals.length}`); }
-    if (icon !== undefined)    { vals.push(icon);    fields.push(`icon=$${vals.length}`); }
-    if (sort_order !== undefined) { vals.push(sort_order); fields.push(`sort_order=$${vals.length}`); }
-    if (!fields.length) return res.status(400).json({ error: 'لا توجد بيانات للتحديث' });
-    vals.push(req.params.id);
-    const result = await db.query(
-      `UPDATE categories SET ${fields.join(',')} WHERE id=$${vals.length} RETURNING *`,
-      vals
-    );
-    if (!result.rows.length) return res.status(404).json({ error: 'الفئة غير موجودة' });
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: 'خطأ في الخادم' });
-  }
-});
-
-// DELETE /api/admin/categories/:id
-router.delete('/categories/:id', async (req, res) => {
-  try {
-    await db.query('DELETE FROM categories WHERE id=$1', [req.params.id]);
-    res.json({ message: 'تم حذف الفئة' });
   } catch (err) {
     res.status(500).json({ error: 'خطأ في الخادم' });
   }
