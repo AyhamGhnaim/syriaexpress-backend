@@ -146,6 +146,8 @@ router.get('/:id', async (req, res) => {
               s.governorate as seller_governorate, s.description as seller_description,
               s.logo_url as seller_logo_url,
               s.verification_status as seller_verification_status,
+              s.avg_rating as seller_avg_rating,
+              (SELECT COUNT(*) FROM reviews rv WHERE rv.seller_id = s.id AND rv.rating IS NOT NULL) as seller_review_count,
               c.name_ar as category_name_ar, c.slug as category_slug,
               u.phone as seller_phone, u.email as seller_email,
               (SELECT COUNT(*) FROM products p2 WHERE p2.seller_id = s.id AND p2.status = 'active') as active_products,
