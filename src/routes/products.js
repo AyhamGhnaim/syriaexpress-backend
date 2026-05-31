@@ -9,7 +9,7 @@ const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } });
 // ─── GET all active products ─────────────────────────────
 router.get('/', async (req, res) => {
   try {
-    const { category, governorate, shipping, search, page = 1, limit = 20 } = req.query;
+    const { category, category_id, governorate, shipping, search, min_price, max_price, sort, page = 1, limit = 20 } = req.query;
     const offset = (page - 1) * limit;
     const params = [];
     let where = [];
@@ -17,6 +17,10 @@ router.get('/', async (req, res) => {
     if (category) {
       params.push(category);
       where.push(`v.category_slug = $${params.length}`);
+    }
+    if (category_id) {
+      params.push(category_id);
+      where.push(`p.category_id = $${params.length}`);
     }
     if (shipping === 'to_buyer' && governorate) {
       // إلى محافظة المشتري: أي منتج يصل لمحافظة المشتري (داخلي من نفس المحافظة أو خارجي ضمن قائمته)
@@ -48,11 +52,25 @@ router.get('/', async (req, res) => {
       params.push(`%${search}%`);
       where.push(`(v.name_ar ILIKE $${params.length} OR v.name_en ILIKE $${params.length} OR v.company_name_ar ILIKE $${params.length})`);
     }
+    if (min_price) {
+      params.push(min_price);
+      where.push(`p.price >= $${params.length}`);
+    }
+    if (max_price) {
+      params.push(max_price);
+      where.push(`p.price <= $${params.length}`);
+    }
 
     // بوابة الاعتماد: المشترون يرون المنتجات المعتمدة فقط
     where.push("p.approval_status = 'approved'");
 
     const whereClause = where.length > 0 ? 'WHERE ' + where.join(' AND ') : '';
+
+    let orderBy;
+    if (sort === 'newest')          orderBy = 'ORDER BY p.created_at DESC';
+    else if (sort === 'price_asc')  orderBy = 'ORDER BY p.price ASC';
+    else if (sort === 'price_desc') orderBy = 'ORDER BY p.price DESC';
+    else orderBy = "ORDER BY v.partner_tier = 'gold' DESC, v.partner_tier = 'silver' DESC, v.views_count DESC";
 
     params.push(limit, offset);
     const query = `
@@ -63,7 +81,7 @@ router.get('/', async (req, res) => {
       LEFT JOIN sellers s ON s.id = v.seller_id
       LEFT JOIN products p ON p.id = v.id
       ${whereClause}
-      ORDER BY v.partner_tier = 'gold' DESC, v.partner_tier = 'silver' DESC, v.views_count DESC
+      ${orderBy}
       LIMIT $${params.length - 1} OFFSET $${params.length}
     `;
 
