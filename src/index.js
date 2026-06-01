@@ -95,7 +95,8 @@ app.get('/api/categories', async (req, res) => {
 
 // ─── Health check ─────────────────────────────────────────
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', message: 'SyriaExpress API is running 🚀', time: new Date() });
+  // version = علامة نشر: تؤكّد أن كود الأدمن W2–W4 حيّ على الخادم
+  res.json({ status: 'ok', message: 'SyriaExpress API is running 🚀', version: 'admin-w4', time: new Date() });
 });
 
 // ─── 404 handler ─────────────────────────────────────────
