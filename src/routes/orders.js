@@ -247,9 +247,10 @@ router.patch('/:id/status', auth(['seller','admin','buyer']), async (req, res) =
 
     if (!result.rows.length) return res.status(404).json({ error: 'الطلب غير موجود أو لا يمكن إلغاؤه' });
 
+    const o = result.rows[0];
+
     // استرجاع المخزون عند الإلغاء (للمنتجات بمخزون محدود)
     if (status === 'cancelled') {
-      const o = result.rows[0];
       await db.query(
         `UPDATE products
          SET stock_qty = stock_qty + $1, in_stock = true
@@ -258,7 +259,35 @@ router.patch('/:id/status', auth(['seller','admin','buyer']), async (req, res) =
       );
     }
 
-    res.json({ message: 'تم تحديث حالة الطلب', order: result.rows[0] });
+    // إشعار المشتري عند تحديث حالة الطلب من البائع/الأدمن
+    if (!isBuyer && ['confirmed', 'shipped', 'delivered'].includes(status)) {
+      try {
+        const msg = {
+          confirmed: ['تم تأكيد طلبك', 'أكّد البائع طلبك وجارٍ تجهيزه'],
+          shipped:   ['تم شحن طلبك', 'طلبك في الطريق إليك'],
+          delivered: ['تم تسليم طلبك', 'تم تسليم طلبك — لا تنسَ تقييم البائع']
+        }[status];
+        await db.query(
+          `INSERT INTO notifications (user_id, type, title_ar, body_ar, ref_type, ref_id)
+           VALUES ($1, 'order_status', $2, $3, 'order', $4)`,
+          [o.buyer_id, msg[0], msg[1], o.id]
+        );
+      } catch (e) { /* الإشعارات اختيارية */ }
+    }
+
+    // إشعار البائع عند إلغاء المشتري للطلب
+    if (isBuyer && status === 'cancelled') {
+      try {
+        await db.query(
+          `INSERT INTO notifications (user_id, type, title_ar, body_ar, ref_type, ref_id)
+           SELECT s.user_id, 'order_cancelled', 'تم إلغاء طلب', $1, 'order', $2
+           FROM sellers s WHERE s.id = $3`,
+          [`ألغى المشتري طلباً${o.cancel_reason ? ' — السبب: ' + o.cancel_reason : ''}`, o.id, o.seller_id]
+        );
+      } catch (e) { /* الإشعارات اختيارية */ }
+    }
+
+    res.json({ message: 'تم تحديث حالة الطلب', order: o });
   } catch (err) {
     res.status(500).json({ error: 'خطأ في الخادم' });
   }
