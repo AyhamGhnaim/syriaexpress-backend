@@ -125,13 +125,15 @@ router.post('/', auth(['buyer']), async (req, res) => {
       );
     }
 
-    // Notify seller
-    await db.query(
-      `INSERT INTO notifications (user_id, type, title_ar, body_ar, ref_type, ref_id)
-       SELECT s.user_id, 'new_order', 'طلب جديد', $1, 'order', $2
-       FROM sellers s WHERE s.id = $3`,
-      [`طلب جديد بكمية ${quantity} ${p.unit}`, result.rows[0].id, p.seller_id]
-    );
+    // Notify seller (الإشعار اختياري — فشله يجب ألا يُفشل الطلب)
+    try {
+      await db.query(
+        `INSERT INTO notifications (user_id, type, title_ar, body_ar, ref_type, ref_id)
+         SELECT s.user_id, 'new_order', 'طلب جديد', $1, 'order', $2
+         FROM sellers s WHERE s.id = $3`,
+        [`طلب جديد بكمية ${quantity} ${p.unit}`, result.rows[0].id, p.seller_id]
+      );
+    } catch (e) { console.error('order notify seller failed:', e.message); }
 
     res.status(201).json({ message: 'تم إرسال طلبك بنجاح', order: result.rows[0] });
 
@@ -171,6 +173,7 @@ router.get('/my', auth(['buyer']), async (req, res) => {
     );
     res.json(result.rows);
   } catch (err) {
+    console.error('orders route error:', err.message || err);
     res.status(500).json({ error: 'خطأ في الخادم' });
   }
 });
@@ -203,6 +206,7 @@ router.get('/seller', auth(['seller']), async (req, res) => {
     );
     res.json(result.rows);
   } catch (err) {
+    console.error('orders route error:', err.message || err);
     res.status(500).json({ error: 'خطأ في الخادم' });
   }
 });
@@ -289,6 +293,7 @@ router.patch('/:id/status', auth(['seller','admin','buyer']), async (req, res) =
 
     res.json({ message: 'تم تحديث حالة الطلب', order: o });
   } catch (err) {
+    console.error('orders route error:', err.message || err);
     res.status(500).json({ error: 'خطأ في الخادم' });
   }
 });
@@ -312,6 +317,7 @@ router.get('/:id', auth(), async (req, res) => {
     if (!result.rows.length) return res.status(404).json({ error: 'الطلب غير موجود' });
     res.json(result.rows[0]);
   } catch (err) {
+    console.error('orders route error:', err.message || err);
     res.status(500).json({ error: 'خطأ في الخادم' });
   }
 });
