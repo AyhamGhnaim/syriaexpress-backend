@@ -62,6 +62,8 @@ router.post('/', auth(['buyer']), async (req, res) => {
 // ─── PATCH /api/reviews/:id/reply — ردّ البائع على تقييم (لا يحذف التقييم) ───
 router.patch('/:id/reply', auth(['seller']), async (req, res) => {
   const text = (req.body && req.body.reply ? String(req.body.reply) : '').trim();
+  const replyVal = text || null;
+  const replyAt  = replyVal ? new Date() : null;
   try {
     const seller = await db.query('SELECT id FROM sellers WHERE user_id = $1', [req.user.id]);
     if (!seller.rows.length) return res.status(403).json({ error: 'غير مصرح' });
@@ -69,11 +71,10 @@ router.patch('/:id/reply', auth(['seller']), async (req, res) => {
     // فقط على تقييمات هذا البائع — لا يستطيع لمس تقييمات غيره
     const result = await db.query(
       `UPDATE reviews
-         SET seller_reply = $1,
-             seller_reply_at = CASE WHEN $1 IS NULL THEN NULL ELSE NOW() END
-       WHERE id = $2 AND seller_id = $3
+         SET seller_reply = $1, seller_reply_at = $2
+       WHERE id = $3 AND seller_id = $4
        RETURNING id`,
-      [text || null, req.params.id, seller.rows[0].id]
+      [replyVal, replyAt, req.params.id, seller.rows[0].id]
     );
     if (!result.rows.length) return res.status(404).json({ error: 'التقييم غير موجود' });
     res.json({ message: text ? 'تم نشر ردّك' : 'تم حذف الردّ' });
