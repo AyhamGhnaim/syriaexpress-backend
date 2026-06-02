@@ -596,4 +596,54 @@ router.get('/audit', async (req, res) => {
   }
 });
 
+// ─── Reviews moderation (admin can delete abusive/fake reviews) ───
+// GET /api/admin/reviews
+router.get('/reviews', async (req, res) => {
+  try {
+    const { page = 1, limit = 50 } = req.query;
+    const rows = await db.query(
+      `SELECT r.id, r.rating, r.comment, r.seller_reply, r.created_at,
+              bu.name            AS buyer_name,
+              s.company_name_ar  AS seller_name,
+              p.name_ar          AS product_name
+       FROM reviews r
+       LEFT JOIN users    bu ON r.buyer_id  = bu.id
+       LEFT JOIN sellers  s  ON r.seller_id = s.id
+       LEFT JOIN products p  ON r.product_id = p.id
+       WHERE r.rating IS NOT NULL
+       ORDER BY r.created_at DESC
+       LIMIT $1 OFFSET $2`,
+      [limit, (page - 1) * limit]
+    );
+    res.json({ reviews: rows.rows });
+  } catch (err) {
+    console.error('GET /admin/reviews', err);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
+// DELETE /api/admin/reviews/:id
+router.delete('/reviews/:id', async (req, res) => {
+  try {
+    const del = await db.query('DELETE FROM reviews WHERE id = $1 RETURNING seller_id', [req.params.id]);
+    if (!del.rows.length) return res.status(404).json({ error: 'التقييم غير موجود' });
+    const sellerId = del.rows[0].seller_id;
+    // إعادة حساب متوسط تقييم البائع بعد الحذف
+    try {
+      await db.query(
+        `UPDATE sellers SET avg_rating = (
+           SELECT ROUND(AVG(rating)::numeric, 2) FROM reviews
+           WHERE seller_id = $1 AND rating IS NOT NULL
+         ) WHERE id = $1`,
+        [sellerId]
+      );
+    } catch (e) { /* avg_rating قد يكون في view */ }
+    await logAudit(req.user.id, 'review_delete', 'review', req.params.id, { seller_id: sellerId });
+    res.json({ message: 'تم حذف التقييم' });
+  } catch (err) {
+    console.error('DELETE /admin/reviews/:id', err);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
 module.exports = router;

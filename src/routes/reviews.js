@@ -59,11 +59,35 @@ router.post('/', auth(['buyer']), async (req, res) => {
   }
 });
 
+// ─── PATCH /api/reviews/:id/reply — ردّ البائع على تقييم (لا يحذف التقييم) ───
+router.patch('/:id/reply', auth(['seller']), async (req, res) => {
+  const text = (req.body && req.body.reply ? String(req.body.reply) : '').trim();
+  try {
+    const seller = await db.query('SELECT id FROM sellers WHERE user_id = $1', [req.user.id]);
+    if (!seller.rows.length) return res.status(403).json({ error: 'غير مصرح' });
+
+    // فقط على تقييمات هذا البائع — لا يستطيع لمس تقييمات غيره
+    const result = await db.query(
+      `UPDATE reviews
+         SET seller_reply = $1,
+             seller_reply_at = CASE WHEN $1 IS NULL THEN NULL ELSE NOW() END
+       WHERE id = $2 AND seller_id = $3
+       RETURNING id`,
+      [text || null, req.params.id, seller.rows[0].id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'التقييم غير موجود' });
+    res.json({ message: text ? 'تم نشر ردّك' : 'تم حذف الردّ' });
+  } catch (err) {
+    console.error('PATCH /reviews/:id/reply', err);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
 // ─── GET /api/reviews/seller/:id — قائمة تقييمات بائع (عام) ───
 router.get('/seller/:id', async (req, res) => {
   try {
     const rows = await db.query(
-      `SELECT r.id, r.rating, r.comment, r.created_at, u.name as buyer_name
+      `SELECT r.id, r.rating, r.comment, r.created_at, r.seller_reply, r.seller_reply_at, u.name as buyer_name
        FROM reviews r JOIN users u ON r.buyer_id = u.id
        WHERE r.seller_id = $1 AND r.rating IS NOT NULL
        ORDER BY r.created_at DESC LIMIT 50`,
