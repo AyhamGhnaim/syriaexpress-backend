@@ -600,7 +600,37 @@ router.get('/audit', async (req, res) => {
 // GET /api/admin/reviews
 router.get('/reviews', async (req, res) => {
   try {
-    const { page = 1, limit = 50 } = req.query;
+    const { page = 1, limit = 50, rating, q, replied, sort } = req.query;
+
+    const params = [];
+    let where = 'WHERE r.rating IS NOT NULL';
+
+    // فلتر عدد النجوم (1..5)
+    const rt = parseInt(rating);
+    if (rt >= 1 && rt <= 5) { params.push(rt); where += ` AND r.rating = $${params.length}`; }
+
+    // تصفية حسب وجود ردّ بائع
+    if (replied === 'yes') where += " AND r.seller_reply IS NOT NULL AND btrim(r.seller_reply) <> ''";
+    else if (replied === 'no') where += " AND (r.seller_reply IS NULL OR btrim(r.seller_reply) = '')";
+
+    // بحث نصّي (اسم بائع/مشتري/تعليق/منتج)
+    if (q && String(q).trim()) {
+      params.push('%' + String(q).trim() + '%');
+      const i = params.length;
+      where += ` AND (bu.name ILIKE $${i} OR s.company_name_ar ILIKE $${i} OR r.comment ILIKE $${i} OR p.name_ar ILIKE $${i})`;
+    }
+
+    // الفرز
+    const orderBy = {
+      newest:     'r.created_at DESC',
+      oldest:     'r.created_at ASC',
+      rating_high:'r.rating DESC, r.created_at DESC',
+      rating_low: 'r.rating ASC, r.created_at DESC'
+    }[sort] || 'r.created_at DESC';
+
+    const lim = Math.min(parseInt(limit) || 50, 100);
+    params.push(lim, (parseInt(page) - 1 || 0) * lim);
+
     const rows = await db.query(
       `SELECT r.id, r.rating, r.comment, r.seller_reply, r.created_at,
               bu.name            AS buyer_name,
@@ -610,10 +640,10 @@ router.get('/reviews', async (req, res) => {
        LEFT JOIN users    bu ON r.buyer_id  = bu.id
        LEFT JOIN sellers  s  ON r.seller_id = s.id
        LEFT JOIN products p  ON r.product_id = p.id
-       WHERE r.rating IS NOT NULL
-       ORDER BY r.created_at DESC
-       LIMIT $1 OFFSET $2`,
-      [limit, (page - 1) * limit]
+       ${where}
+       ORDER BY ${orderBy}
+       LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params
     );
     res.json({ reviews: rows.rows });
   } catch (err) {
