@@ -7,6 +7,33 @@ const auth    = require('../middleware/auth');
 // POST /api/orders
 router.post('/', auth(['buyer']), async (req, res) => {
   const { product_id, quantity, shipping_type, shipping_address, notes, coupon_code } = req.body;
+
+  // ── موعد التوصيل المفضّل (اختياري) ──
+  let preferred_delivery_date = (typeof req.body.preferred_delivery_date === 'string' && req.body.preferred_delivery_date.trim())
+    ? req.body.preferred_delivery_date.trim() : null;
+  let preferred_delivery_slot = (typeof req.body.preferred_delivery_slot === 'string' && req.body.preferred_delivery_slot.trim())
+    ? req.body.preferred_delivery_slot.trim() : null;
+
+  if (preferred_delivery_date) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(preferred_delivery_date))
+      return res.status(400).json({ error: 'صيغة موعد التوصيل غير صحيحة' });
+    const dParts = preferred_delivery_date.split('-').map(Number);
+    const pd = new Date(Date.UTC(dParts[0], dParts[1] - 1, dParts[2]));
+    // تحقق round-trip: يرفض التواريخ المستحيلة التي يدوّرها JS (مثل 2026-02-30)
+    if (isNaN(pd.getTime()) || pd.getUTCFullYear() !== dParts[0] || pd.getUTCMonth() !== dParts[1] - 1 || pd.getUTCDate() !== dParts[2])
+      return res.status(400).json({ error: 'موعد التوصيل غير صالح' });
+    const todayUTC = new Date(); todayUTC.setUTCHours(0, 0, 0, 0);
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    if (pd.getTime() < todayUTC.getTime() - DAY_MS)         // سماحية يوم واحد لفروقات التوقيت
+      return res.status(400).json({ error: 'موعد التوصيل لا يمكن أن يكون في الماضي' });
+    if (pd.getTime() > todayUTC.getTime() + 365 * DAY_MS)   // حد أعلى منطقي: سنة
+      return res.status(400).json({ error: 'موعد التوصيل بعيد جداً' });
+  } else {
+    preferred_delivery_slot = null; // فترة بلا تاريخ تُتجاهَل
+  }
+  if (preferred_delivery_slot && !['morning', 'afternoon', 'evening'].includes(preferred_delivery_slot))
+    return res.status(400).json({ error: 'فترة التوصيل غير صحيحة' });
+
   try {
     // Get product & seller
     const product = await db.query(
@@ -108,10 +135,10 @@ router.post('/', auth(['buyer']), async (req, res) => {
     }
 
     const result = await db.query(
-      `INSERT INTO orders (buyer_id, seller_id, product_id, quantity, shipping_type, shipping_address, shipping_price, notes, unit_price, coupon_code, discount)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      `INSERT INTO orders (buyer_id, seller_id, product_id, quantity, shipping_type, shipping_address, shipping_price, notes, unit_price, coupon_code, discount, preferred_delivery_date, preferred_delivery_slot)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
        RETURNING *`,
-      [req.user.id, p.seller_id, product_id, quantity, resolved_shipping, shipping_address, shipping_price, notes, unit_price, appliedCoupon, discount]
+      [req.user.id, p.seller_id, product_id, quantity, resolved_shipping, shipping_address, shipping_price, notes, unit_price, appliedCoupon, discount, preferred_delivery_date, preferred_delivery_slot]
     );
 
     // تنقيص المخزون (إن كان محدوداً) مع حماية من السالب
