@@ -73,10 +73,25 @@ router.patch('/:id/reply', auth(['seller']), async (req, res) => {
       `UPDATE reviews
          SET seller_reply = $1, seller_reply_at = $2
        WHERE id = $3 AND seller_id = $4
-       RETURNING id`,
+       RETURNING id, buyer_id, order_id`,
       [replyVal, replyAt, req.params.id, seller.rows[0].id]
     );
     if (!result.rows.length) return res.status(404).json({ error: 'التقييم غير موجود' });
+
+    // إشعار المشتري عند نشر ردّ (لا عند حذفه) — اختياري، فشله لا يُفشل العملية
+    if (replyVal) {
+      try {
+        const rv = result.rows[0];
+        if (rv.buyer_id) {
+          await db.query(
+            `INSERT INTO notifications (user_id, type, title_ar, body_ar, ref_type, ref_id)
+             VALUES ($1, 'review_reply', 'ردّ جديد على تقييمك', 'نشر البائع ردّاً على تقييمك', 'order', $2)`,
+            [rv.buyer_id, rv.order_id]
+          );
+        }
+      } catch (e) { console.error('review reply notify failed:', e.message); }
+    }
+
     res.json({ message: text ? 'تم نشر ردّك' : 'تم حذف الردّ' });
   } catch (err) {
     console.error('PATCH /reviews/:id/reply', err);

@@ -268,7 +268,13 @@ router.patch('/:id/status', auth(['seller','admin','buyer']), async (req, res) =
       query = `UPDATE orders SET status = $1, ${timestampField} = NOW(), cancel_reason = $2
                WHERE id = $3 AND buyer_id = $4 AND status = 'pending' RETURNING *`;
       params = [status, cancel_reason || 'إلغاء من المشتري', req.params.id, req.user.id];
+    } else if (req.user.user_type === 'seller') {
+      // البائع: فقط طلباته — إغلاق IDOR (كان يحدّث أي طلب)
+      query = `UPDATE orders SET status = $1, ${timestampField} = NOW(), cancel_reason = $2
+               WHERE id = $3 AND seller_id = (SELECT id FROM sellers WHERE user_id = $4) RETURNING *`;
+      params = [status, cancel_reason || null, req.params.id, req.user.id];
     } else {
+      // الأدمن: بلا قيد ملكية
       query = `UPDATE orders SET status = $1, ${timestampField} = NOW(), cancel_reason = $2
                WHERE id = $3 RETURNING *`;
       params = [status, cancel_reason || null, req.params.id];
@@ -290,18 +296,20 @@ router.patch('/:id/status', auth(['seller','admin','buyer']), async (req, res) =
       );
     }
 
-    // إشعار المشتري عند تحديث حالة الطلب من البائع/الأدمن
-    if (!isBuyer && ['confirmed', 'shipped', 'delivered'].includes(status)) {
+    // إشعار المشتري عند تحديث حالة الطلب من البائع/الأدمن (يشمل الإلغاء)
+    if (!isBuyer && ['confirmed', 'shipped', 'delivered', 'cancelled'].includes(status)) {
       try {
         const msg = {
           confirmed: ['تم تأكيد طلبك', 'أكّد البائع طلبك وجارٍ تجهيزه'],
           shipped:   ['تم شحن طلبك', 'طلبك في الطريق إليك'],
-          delivered: ['تم تسليم طلبك', 'تم تسليم طلبك — لا تنسَ تقييم البائع']
+          delivered: ['تم تسليم طلبك', 'تم تسليم طلبك — لا تنسَ تقييم البائع'],
+          cancelled: ['تم إلغاء طلبك', 'تم إلغاء طلبك' + (o.cancel_reason ? ' — السبب: ' + o.cancel_reason : '')]
         }[status];
+        const notifType = status === 'cancelled' ? 'order_cancelled' : 'order_status';
         await db.query(
           `INSERT INTO notifications (user_id, type, title_ar, body_ar, ref_type, ref_id)
-           VALUES ($1, 'order_status', $2, $3, 'order', $4)`,
-          [o.buyer_id, msg[0], msg[1], o.id]
+           VALUES ($1, $2, $3, $4, 'order', $5)`,
+          [o.buyer_id, notifType, msg[0], msg[1], o.id]
         );
       } catch (e) { /* الإشعارات اختيارية */ }
     }
