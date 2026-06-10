@@ -238,6 +238,138 @@ router.get('/seller', auth(['seller']), async (req, res) => {
   }
 });
 
+// ─── Predictive reorder suggestions (buyer) ──────────────
+// GET /api/orders/reorder-suggestions
+// منطق خادمي بالكامل من تاريخ طلبات المشتري + حالة المخزون — لا جداول/أعمدة جديدة
+router.get('/reorder-suggestions', auth(['buyer']), async (req, res) => {
+  try {
+    // كل تواريخ وكميات الطلبات (غير الملغاة) لكل منتج اشتراه المشتري
+    const hist = await db.query(
+      `SELECT o.product_id, o.quantity, o.created_at,
+              p.name_ar, p.name_en, p.unit, p.price, p.stock_qty, p.in_stock, p.low_stock_threshold,
+              p.approval_status, p.seller_id,
+              s.company_name_ar,
+              COALESCE((SELECT image_url FROM product_images WHERE product_id = p.id AND is_primary=true LIMIT 1), p.image_url) AS product_image
+       FROM orders o
+       JOIN products p ON o.product_id = p.id
+       JOIN sellers  s ON o.seller_id  = s.id
+       WHERE o.buyer_id = $1 AND o.status <> 'cancelled' AND p.approval_status = 'approved'
+       ORDER BY o.product_id, o.created_at ASC`,
+      [req.user.id]
+    );
+
+    // المنتجات المحفوظة (لتنبيه النفاد حتى لو لم تُطلب)
+    const saved = await db.query(
+      `SELECT v.id AS product_id, v.name_ar, v.name_en, v.unit, v.price,
+              p.stock_qty, p.in_stock, p.low_stock_threshold, p.seller_id, p.approval_status,
+              s.company_name_ar,
+              COALESCE((SELECT image_url FROM product_images WHERE product_id = v.id AND is_primary=true LIMIT 1), v.image_url) AS product_image
+       FROM saved_products sp
+       JOIN v_products_full v ON v.id = sp.product_id
+       LEFT JOIN products p ON p.id = v.id
+       LEFT JOIN sellers  s ON s.id = v.seller_id
+       WHERE sp.user_id = $1 AND p.approval_status = 'approved'`,
+      [req.user.id]
+    );
+
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    const now = Date.now();
+
+    // تجميع تاريخ كل منتج
+    const byProduct = new Map();
+    for (const r of hist.rows) {
+      if (!byProduct.has(r.product_id)) byProduct.set(r.product_id, { meta: r, dates: [], lastQty: null });
+      const g = byProduct.get(r.product_id);
+      g.dates.push(new Date(r.created_at).getTime());
+      g.meta = r;               // آخر صف = أحدث بيانات المنتج (مرتّب ASC)
+      g.lastQty = r.quantity;   // آخر كمية
+    }
+
+    function stockState(m) {
+      if (m.in_stock === false) return 'out_of_stock';
+      if (m.stock_qty !== null && m.stock_qty !== undefined &&
+          m.low_stock_threshold !== null && m.low_stock_threshold !== undefined &&
+          m.stock_qty <= m.low_stock_threshold) return 'low_stock';
+      return 'in_stock';
+    }
+
+    const suggestions = [];
+    const seen = new Set();
+
+    for (const [pid, g] of byProduct) {
+      const m = g.meta;
+      const stk = stockState(m);
+      const lastDate = g.dates[g.dates.length - 1];
+
+      // الإيقاع: يحتاج ≥ طلبين لحساب متوسط فجوة موثوق
+      let cadenceDays = null, dueDate = null, isDue = false;
+      if (g.dates.length >= 2) {
+        let sum = 0;
+        for (let i = 1; i < g.dates.length; i++) sum += (g.dates[i] - g.dates[i - 1]);
+        cadenceDays = (sum / (g.dates.length - 1)) / DAY_MS;
+        if (cadenceDays >= 1) {                       // تجاهل الإيقاعات غير الواقعية
+          dueDate = lastDate + cadenceDays * DAY_MS;
+          isDue = now >= (dueDate - cadenceDays * 0.2 * DAY_MS);  // حلّ الموعد أو قارب (20%)
+        }
+      }
+
+      // أُدرج إن: نفد/قارب النفاد (فرصة ضائعة) أو حان وقت إعادة الطلب
+      let reason = null;
+      if (stk === 'out_of_stock') reason = 'out_of_stock';
+      else if (stk === 'low_stock') reason = 'low_stock';
+      else if (isDue) reason = 'due_reorder';
+
+      if (reason) {
+        seen.add(pid);
+        suggestions.push({
+          product_id: pid,
+          name_ar: m.name_ar, name_en: m.name_en, unit: m.unit,
+          price: m.price, seller_id: m.seller_id, company_name_ar: m.company_name_ar,
+          product_image: m.product_image,
+          last_quantity: g.lastQty,
+          last_ordered_at: new Date(lastDate).toISOString(),
+          order_count: g.dates.length,
+          cadence_days: cadenceDays ? Math.round(cadenceDays) : null,
+          stock_state: stk,
+          reason
+        });
+      }
+    }
+
+    // إضافة المحفوظات النافدة/القاربة التي لم تظهر من التاريخ
+    for (const r of saved.rows) {
+      if (seen.has(r.product_id)) continue;
+      const stk = stockState(r);
+      if (stk === 'out_of_stock' || stk === 'low_stock') {
+        seen.add(r.product_id);
+        suggestions.push({
+          product_id: r.product_id,
+          name_ar: r.name_ar, name_en: r.name_en, unit: r.unit,
+          price: r.price, seller_id: r.seller_id, company_name_ar: r.company_name_ar,
+          product_image: r.product_image,
+          last_quantity: null, last_ordered_at: null, order_count: 0,
+          cadence_days: null,
+          stock_state: stk,
+          reason: stk === 'out_of_stock' ? 'saved_out_of_stock' : 'saved_low_stock'
+        });
+      }
+    }
+
+    // الترتيب: الإلحاح أولاً (نفد → قارب → مستحق)، ثم الأحدث طلباً
+    const rank = { out_of_stock: 0, saved_out_of_stock: 1, low_stock: 2, saved_low_stock: 3, due_reorder: 4 };
+    suggestions.sort((a, b) => {
+      const d = (rank[a.reason] ?? 9) - (rank[b.reason] ?? 9);
+      if (d !== 0) return d;
+      return (new Date(b.last_ordered_at || 0)) - (new Date(a.last_ordered_at || 0));
+    });
+
+    res.json({ suggestions: suggestions.slice(0, 8) });
+  } catch (err) {
+    console.error('reorder-suggestions error:', err.message || err);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
 // ─── Update order status (seller/admin/buyer cancel) ─────
 // PATCH /api/orders/:id/status
 router.patch('/:id/status', auth(['seller','admin','buyer']), async (req, res) => {
