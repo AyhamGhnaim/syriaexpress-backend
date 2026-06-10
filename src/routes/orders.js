@@ -330,7 +330,7 @@ router.get('/:id', auth(), async (req, res) => {
   try {
     const result = await db.query(
       `SELECT o.*, p.name_ar, p.name_en, p.unit, p.min_order_quantity, p.price,
-              s.company_name_ar, s.partner_tier, s.governorate as seller_gov,
+              s.company_name_ar, s.partner_tier, s.governorate as seller_gov, s.phone as seller_phone,
               u.name as buyer_name, u.phone as buyer_phone,
               COALESCE((SELECT image_url FROM product_images WHERE product_id = p.id AND is_primary=true LIMIT 1), p.image_url) as product_image,
               (o.quantity * COALESCE(o.unit_price, p.price) - COALESCE(o.discount,0) + o.shipping_price) as total_amount
@@ -342,7 +342,21 @@ router.get('/:id', auth(), async (req, res) => {
       [req.params.id]
     );
     if (!result.rows.length) return res.status(404).json({ error: 'الطلب غير موجود' });
-    res.json(result.rows[0]);
+
+    // تقييد الوصول بطرفَي الطلب: المشتري صاحبه / البائع صاحبه / الأدمن
+    const o = result.rows[0];
+    if (req.user.user_type === 'buyer') {
+      if (o.buyer_id !== req.user.id)
+        return res.status(403).json({ error: 'غير مصرح بالاطلاع على هذا الطلب' });
+    } else if (req.user.user_type === 'seller') {
+      const sl = await db.query('SELECT id FROM sellers WHERE user_id = $1', [req.user.id]);
+      if (!sl.rows.length || sl.rows[0].id !== o.seller_id)
+        return res.status(403).json({ error: 'غير مصرح بالاطلاع على هذا الطلب' });
+    } else if (req.user.user_type !== 'admin') {
+      return res.status(403).json({ error: 'غير مصرح بالاطلاع على هذا الطلب' });
+    }
+
+    res.json(o);
   } catch (err) {
     console.error('orders route error:', err.message || err);
     res.status(500).json({ error: 'خطأ في الخادم' });

@@ -95,8 +95,8 @@ app.get('/api/categories', async (req, res) => {
 
 // ─── Health check ─────────────────────────────────────────
 app.get('/api/health', (req, res) => {
-  // version = علامة نشر: تؤكّد أن كود B1 (موعد التوصيل المفضّل) حيّ على الخادم
-  res.json({ status: 'ok', message: 'SyriaExpress API is running 🚀', version: 'b1-delivery-pref', time: new Date() });
+  // version = علامة نشر: تؤكّد أن كود B2 (فواتير + تقييد طلب مفرد) حيّ على الخادم
+  res.json({ status: 'ok', message: 'SyriaExpress API is running 🚀', version: 'b2-invoices', time: new Date() });
 });
 
 // ─── 404 handler ─────────────────────────────────────────
