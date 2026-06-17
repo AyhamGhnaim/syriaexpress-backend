@@ -3,53 +3,92 @@ const router  = express.Router();
 const bcrypt  = require('bcryptjs');
 const jwt     = require('jsonwebtoken');
 const db      = require('../config/db');
+const { normalizePhone } = require('../utils/phone');
 
 // ─── Register ───────────────────────────────────────────
 // POST /api/auth/register
 router.post('/register', async (req, res) => {
-  const { name, phone, password, user_type } = req.body;
-  const email = (req.body.email || '').trim().toLowerCase();
+  const { password, user_type } = req.body;
+  const name        = (req.body.name || '').trim();
+  const phoneRaw    = (req.body.phone || '').trim();
+  const emailRaw    = (req.body.email || '').trim().toLowerCase();
+  const email       = emailRaw || null;                 // اختياري → NULL لا ''
+  const phone_normalized = normalizePhone(phoneRaw);
   const governorate = (req.body.governorate || '').trim();
 
   try {
+    // ── تحقّق المُدخلات ──
+    if (!name)
+      return res.status(400).json({ error: 'يرجى إدخال الاسم' });
+    if (!phoneRaw)
+      return res.status(400).json({ error: 'رقم الهاتف مطلوب' });
+    if (!/^[\d\s+\-()]+$/.test(phoneRaw) || phone_normalized.length < 9)
+      return res.status(400).json({ error: 'رقم الهاتف غير صالح' });
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+      return res.status(400).json({ error: 'البريد الإلكتروني غير صالح' });
+    if (!password || password.length < 6)
+      return res.status(400).json({ error: 'كلمة المرور يجب أن تكون 6 أحرف على الأقل' });
+
     // البائعون يجب أن يكونوا داخل سوريا
     if (user_type === 'seller' && governorate === 'خارج سوريا') {
       return res.status(400).json({ error: 'البائعون يجب أن يكونوا داخل سوريا' });
     }
 
-    // Check email exists
-    const exists = await db.query('SELECT id FROM users WHERE LOWER(email) = $1', [email]);
-    if (exists.rows.length > 0)
-      return res.status(400).json({ error: 'البريد الإلكتروني مسجّل مسبقاً' });
+    // ── فحص الفرادة (مسار سريع ودود؛ القيود تحمي من السباق) ──
+    const dupPhone = await db.query(
+      'SELECT 1 FROM users WHERE phone_normalized = $1', [phone_normalized]
+    );
+    if (dupPhone.rows.length)
+      return res.status(400).json({ error: 'رقم الهاتف مسجّل مسبقاً' });
+
+    if (email) {
+      const dupEmail = await db.query(
+        'SELECT 1 FROM users WHERE LOWER(email) = $1', [email]
+      );
+      if (dupEmail.rows.length)
+        return res.status(400).json({ error: 'البريد الإلكتروني مسجّل مسبقاً' });
+    }
 
     // Hash password
     const password_hash = await bcrypt.hash(password, 12);
 
-    // Insert user
-    const result = await db.query(
-      `INSERT INTO users (name, email, phone, password_hash, user_type, governorate)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING id, name, email, user_type, governorate, created_at`,
-      [name, email, phone, password_hash, user_type || 'buyer', governorate]
-    );
+    // ── إنشاء ذرّي: user + seller + verification في معاملة واحدة ──
+    const client = await db.connect();
+    let user;
+    try {
+      await client.query('BEGIN');
 
-    const user = result.rows[0];
-
-    // If seller → create seller profile + verification request
-    if (user_type === 'seller') {
-      const { company_name_ar, company_name_en, activity_type } = req.body;
-
-      const sellerResult = await db.query(
-        `INSERT INTO sellers (user_id, company_name_ar, company_name_en, activity_type, governorate)
-         VALUES ($1, $2, $3, $4, $5)
-         RETURNING id`,
-        [user.id, company_name_ar, company_name_en, activity_type, governorate]
+      const result = await client.query(
+        `INSERT INTO users (name, email, phone, phone_normalized, password_hash, user_type, governorate)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING id, name, email, user_type, governorate, created_at`,
+        [name, email, phoneRaw, phone_normalized, password_hash, user_type || 'buyer', governorate]
       );
+      user = result.rows[0];
 
-      await db.query(
-        `INSERT INTO verification_requests (seller_id) VALUES ($1)`,
-        [sellerResult.rows[0].id]
-      );
+      // If seller → create seller profile + verification request
+      if (user_type === 'seller') {
+        const { company_name_ar, company_name_en, activity_type } = req.body;
+
+        const sellerResult = await client.query(
+          `INSERT INTO sellers (user_id, company_name_ar, company_name_en, activity_type, governorate)
+           VALUES ($1, $2, $3, $4, $5)
+           RETURNING id`,
+          [user.id, company_name_ar, company_name_en, activity_type, governorate]
+        );
+
+        await client.query(
+          `INSERT INTO verification_requests (seller_id) VALUES ($1)`,
+          [sellerResult.rows[0].id]
+        );
+      }
+
+      await client.query('COMMIT');
+    } catch (txErr) {
+      await client.query('ROLLBACK');
+      throw txErr;
+    } finally {
+      client.release();
     }
 
     // Generate token
@@ -62,6 +101,14 @@ router.post('/register', async (req, res) => {
     res.status(201).json({ message: 'تم إنشاء الحساب بنجاح', token, user });
 
   } catch (err) {
+    // شبكة أمان ضد سباق الفرادة (race) — القيود تردّ بـ 23505
+    if (err && err.code === '23505') {
+      if (err.constraint === 'uniq_users_phone_normalized')
+        return res.status(400).json({ error: 'رقم الهاتف مسجّل مسبقاً' });
+      if (err.constraint === 'users_email_key')
+        return res.status(400).json({ error: 'البريد الإلكتروني مسجّل مسبقاً' });
+      return res.status(400).json({ error: 'الحساب مسجّل مسبقاً' });
+    }
     console.error('Register error:', err);
     res.status(500).json({ error: 'خطأ في الخادم' });
   }
@@ -70,23 +117,38 @@ router.post('/register', async (req, res) => {
 // ─── Login ───────────────────────────────────────────────
 // POST /api/auth/login
 router.post('/login', async (req, res) => {
-  const email = (req.body.email || '').trim().toLowerCase();
+  // مُعرّف مزدوج: identifier (الجديد) أو email (توافق رجعي مع الواجهة القديمة)
+  const identifierRaw = (req.body.identifier || req.body.email || '').trim();
   const { password } = req.body;
 
   try {
-    const result = await db.query(
-      'SELECT * FROM users WHERE LOWER(email) = $1 AND is_active = true',
-      [email]
-    );
+    if (!identifierRaw || !password)
+      return res.status(401).json({ error: 'بيانات الدخول غير صحيحة' });
 
+    // حلّ الحساب server-side: فيه @ → بريد، وإلا → هاتف عبر phone_normalized.
+    // العميل لا يرى أبداً المُعرّف الآخر → لا تسريب phone→email.
+    let result;
+    if (identifierRaw.includes('@')) {
+      result = await db.query(
+        'SELECT * FROM users WHERE LOWER(email) = $1 AND is_active = true',
+        [identifierRaw.toLowerCase()]
+      );
+    } else {
+      result = await db.query(
+        'SELECT * FROM users WHERE phone_normalized = $1 AND is_active = true',
+        [normalizePhone(identifierRaw)]
+      );
+    }
+
+    // anti-enumeration: نفس الرسالة لـ (غير موجود / غير مفعّل / كلمة سر خاطئة)
     if (result.rows.length === 0)
-      return res.status(401).json({ error: 'البريد أو كلمة المرور غير صحيحة' });
+      return res.status(401).json({ error: 'بيانات الدخول غير صحيحة' });
 
     const user = result.rows[0];
     const valid = await bcrypt.compare(password, user.password_hash);
 
     if (!valid)
-      return res.status(401).json({ error: 'البريد أو كلمة المرور غير صحيحة' });
+      return res.status(401).json({ error: 'بيانات الدخول غير صحيحة' });
 
     const token = jwt.sign(
       { id: user.id, email: user.email, user_type: user.user_type, governorate: user.governorate },
@@ -219,7 +281,20 @@ router.put('/me', auth(), async (req, res) => {
     const vals = [];
 
     if (name)  { vals.push(name.trim());  fields.push(`name=$${vals.length}`); }
-    if (phone) { vals.push(phone.trim()); fields.push(`phone=$${vals.length}`); }
+    if (phone) {
+      const phoneTrim = phone.trim();
+      const pn = normalizePhone(phoneTrim);
+      if (!/^[\d\s+\-()]+$/.test(phoneTrim) || pn.length < 9)
+        return res.status(400).json({ error: 'رقم الهاتف غير صالح' });
+      // فرادة الرقم المطبَّع (سدّ ثغرة: كان يُغيَّر بلا فحص)
+      const taken = await db.query(
+        'SELECT id FROM users WHERE phone_normalized = $1 AND id != $2', [pn, req.user.id]
+      );
+      if (taken.rows.length)
+        return res.status(400).json({ error: 'رقم الهاتف مستخدم من حساب آخر' });
+      vals.push(phoneTrim); fields.push(`phone=$${vals.length}`);
+      vals.push(pn);        fields.push(`phone_normalized=$${vals.length}`);
+    }
     if (email) {
       const newEmail = email.trim().toLowerCase();
       // Check email not taken by another user
