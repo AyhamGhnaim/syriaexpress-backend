@@ -2,6 +2,7 @@ const express = require('express');
 const router  = express.Router();
 const db      = require('../config/db');
 const auth    = require('../middleware/auth');
+const settings = require('../utils/settings');
 
 // All admin routes require admin role
 router.use(auth(['admin']));
@@ -282,6 +283,7 @@ router.put('/settings/:key', async (req, res) => {
         [req.params.key, value, req.user.id]
       );
     }
+    settings.invalidate();   // تأثير فوري للإعداد الجديد (بلا انتظار انتهاء الكاش)
     await logAudit(req.user.id, 'setting_update', 'setting', req.params.key, { value });
     res.json({ message: 'تم تحديث الإعداد' });
   } catch (err) {

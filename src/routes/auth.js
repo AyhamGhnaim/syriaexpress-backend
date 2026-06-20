@@ -4,6 +4,7 @@ const bcrypt  = require('bcryptjs');
 const jwt     = require('jsonwebtoken');
 const db      = require('../config/db');
 const { normalizePhone } = require('../utils/phone');
+const settings = require('../utils/settings');
 
 // ─── Register ───────────────────────────────────────────
 // POST /api/auth/register
@@ -33,6 +34,16 @@ router.post('/register', async (req, res) => {
     if (user_type === 'seller' && governorate === 'خارج سوريا') {
       return res.status(400).json({ error: 'البائعون يجب أن يكونوا داخل سوريا' });
     }
+
+    // بوّابة تسجيل المشترين (إعداد منصّة) — البائعون لا يتأثرون
+    const isSeller = user_type === 'seller';
+    if (!isSeller) {
+      const buyerOpen = await settings.getBool('buyer_open_registration', true);
+      if (!buyerOpen)
+        return res.status(403).json({ error: 'تسجيل المشترين مغلق حالياً' });
+    }
+    // توثيق تلقائي للبائع عند إيقاف التوثيق اليدوي (الافتراضي: يدوي)
+    const autoVerify = isSeller && !(await settings.getBool('seller_manual_verify', true));
 
     // ── فحص الفرادة (مسار سريع ودود؛ القيود تحمي من السباق) ──
     const dupPhone = await db.query(
@@ -82,6 +93,18 @@ router.post('/register', async (req, res) => {
           [sellerResult.rows[0].id]
         );
         newSellerId = sellerResult.rows[0].id;
+
+        // توثيق تلقائي (seller_manual_verify=false): يوثّق البائع فوراً
+        if (autoVerify) {
+          await client.query(
+            `UPDATE sellers SET verification_status='verified', verified_at=NOW() WHERE id=$1`,
+            [newSellerId]
+          );
+          await client.query(
+            `UPDATE verification_requests SET status='approved', reviewed_at=NOW() WHERE seller_id=$1`,
+            [newSellerId]
+          );
+        }
       }
 
       await client.query('COMMIT');
@@ -94,7 +117,7 @@ router.post('/register', async (req, res) => {
 
     // إشعار الأدمن: طلب توثيق جديد بانتظار المراجعة (مجمّع — نداء واحد غير مقروء لكل أدمن).
     // خارج المعاملة — فشله يجب ألا يؤثر على إنشاء الحساب.
-    if (user_type === 'seller' && newSellerId) {
+    if (user_type === 'seller' && newSellerId && !autoVerify) {
       try {
         await db.query(
           `INSERT INTO notifications (user_id, type, title_ar, body_ar, ref_type, ref_id)

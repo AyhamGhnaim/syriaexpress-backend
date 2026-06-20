@@ -2,6 +2,7 @@ const express = require('express');
 const router  = express.Router();
 const db      = require('../config/db');
 const auth    = require('../middleware/auth');
+const settings = require('../utils/settings');
 
 // ─── Create order (buyer) ────────────────────────────────
 // POST /api/orders
@@ -94,6 +95,8 @@ router.post('/', auth(['buyer']), async (req, res) => {
       }
     }
     if (resolved_shipping === 'international') {
+      const intlOn = await settings.getBool('international_shipping', true);
+      if (!intlOn) return res.status(400).json({ error: 'الشحن الدولي غير متاح حالياً' });
       if (!p.ship_international) return res.status(400).json({ error: 'هذا المنتج لا يدعم الشحن الدولي' });
     }
 

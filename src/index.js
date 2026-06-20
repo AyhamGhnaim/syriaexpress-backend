@@ -64,6 +64,33 @@ app.use('/api/auth/login',           loginLimiter);
 app.use('/api/auth/register',        registerLimiter);
 app.use('/api/auth/change-password', passwordLimiter);
 
+// ─── Maintenance mode (صيانة ناعمة) ───────────────────────
+// عند تفعيل maintenance_mode: تُمنع العمليات (POST/PUT/PATCH/DELETE) لغير
+// الأدمن (503)، بينما يبقى متاحاً دائماً: التصفّح (GET/OPTIONS)، /health
+// (المراقبة + self-ping)، و /auth/login (ليتمكّن الأدمن من الدخول وإيقاف
+// الصيانة). الأدمن يتجاوز كلياً. fail-open: أي خطأ → المرور (لا قفل غلطاً).
+const settings = require('./utils/settings');
+const jwtMaint = require('jsonwebtoken');
+app.use('/api', async (req, res, next) => {
+  if (req.method === 'GET' || req.method === 'OPTIONS') return next();
+  if (req.path === '/health' || req.path === '/auth/login') return next();
+
+  let on = false;
+  try { on = await settings.getBool('maintenance_mode', false); } catch (_) { on = false; }
+  if (!on) return next();
+
+  // الأدمن يتجاوز الصيانة
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (token) {
+      const decoded = jwtMaint.verify(token, process.env.JWT_SECRET);
+      if (decoded.user_type === 'admin') return next();
+    }
+  } catch (_) { /* توكن غير صالح → يُعامَل كغير أدمن */ }
+
+  return res.status(503).json({ error: 'المنصّة في وضع الصيانة حالياً، يرجى المحاولة لاحقاً' });
+});
+
 // ─── Routes ───────────────────────────────────────────────
 app.use('/api/auth',          require('./routes/auth'));
 app.use('/api/products',      require('./routes/products'));
@@ -96,7 +123,7 @@ app.get('/api/categories', async (req, res) => {
 // ─── Health check ─────────────────────────────────────────
 app.get('/api/health', (req, res) => {
   // version = علامة نشر: تتغيّر مع كل دفعة لتأكيد أن Render خدم آخر كود (آخرها: إشعارات الأدمن)
-  res.json({ status: 'ok', message: 'SyriaExpress API is running 🚀', version: 'notif-admin', time: new Date() });
+  res.json({ status: 'ok', message: 'SyriaExpress API is running 🚀', version: 'platform-toggles', time: new Date() });
 });
 
 // ─── 404 handler ─────────────────────────────────────────
