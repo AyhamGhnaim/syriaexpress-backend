@@ -95,7 +95,7 @@ app.get('/api/categories', async (req, res) => {
 
 // ─── Health check ─────────────────────────────────────────
 app.get('/api/health', (req, res) => {
-  // version = علامة نشر: تؤكّد أن كود مصادقة المُعرّف المزدوج (هاتف/بريد) حيّ على الخادم
+  // version = علامة نشر: تتغيّر مع كل دفعة لتأكيد أن Render خدم آخر كود (آخرها: إشعارات الأدمن)
   res.json({ status: 'ok', message: 'SyriaExpress API is running 🚀', version: 'notif-admin', time: new Date() });
 });
 
