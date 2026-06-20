@@ -55,6 +55,13 @@ router.get('/overview', async (req, res) => {
       topCategory = topCat.rows[0]?.name_ar || null;
     } catch(e) {}
 
+    // عدّاد المنتجات بانتظار الموافقة (دفاعي — لا يكسر اللوحة لو فشل)
+    let pendingProducts = 0;
+    try {
+      const pp = await db.query("SELECT COUNT(*) FROM products WHERE approval_status='pending' AND status != 'archived'");
+      pendingProducts = parseInt(pp.rows[0].count) || 0;
+    } catch(e) {}
+
     const recentOrders = await db.query(
       `SELECT o.id, o.status, o.quantity, o.created_at,
               p.name_ar, s.company_name_ar, u.name as buyer_name
@@ -73,6 +80,7 @@ router.get('/overview', async (req, res) => {
         pending_sellers:  parseInt(pendingSellers.rows[0].count),
         total_orders:     parseInt(orders.rows[0].count),
         pending_verif:    parseInt(pending.rows[0].count),
+        pending_products: pendingProducts,
         total_revenue:    gmv,
         delivered_orders: delivered,
         active_orders:    active,

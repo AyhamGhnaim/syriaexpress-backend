@@ -257,6 +257,24 @@ router.post('/', auth(['seller']), async (req, res) => {
       }
     }
 
+    // إشعار الأدمن: منتج جديد بانتظار المراجعة (مجمّع — نداء واحد غير مقروء لكل أدمن
+    // لتفادي السبام عند الرفع الجماعي CSV؛ العدد الدقيق يظهر كـ badge من /overview).
+    // اختياري — فشله يجب ألا يُفشل إضافة المنتج.
+    try {
+      await db.query(
+        `INSERT INTO notifications (user_id, type, title_ar, body_ar, ref_type, ref_id)
+         SELECT u.id, 'product_pending', 'منتجات بانتظار المراجعة',
+                'هناك منتجات جديدة تحتاج موافقتك — افتح إشراف المنتجات', 'admin_products', $1
+         FROM users u
+         WHERE u.user_type = 'admin'
+           AND NOT EXISTS (
+             SELECT 1 FROM notifications n
+             WHERE n.user_id = u.id AND n.type = 'product_pending' AND n.is_read IS NOT TRUE
+           )`,
+        [newProduct.id]
+      );
+    } catch (e) { console.error('admin product_pending notify failed:', e.message); }
+
     res.status(201).json({ message: 'تم إضافة المنتج', product: newProduct });
 
   } catch (err) {

@@ -96,7 +96,7 @@ app.get('/api/categories', async (req, res) => {
 // ─── Health check ─────────────────────────────────────────
 app.get('/api/health', (req, res) => {
   // version = علامة نشر: تؤكّد أن كود مصادقة المُعرّف المزدوج (هاتف/بريد) حيّ على الخادم
-  res.json({ status: 'ok', message: 'SyriaExpress API is running 🚀', version: 'auth-dual-id', time: new Date() });
+  res.json({ status: 'ok', message: 'SyriaExpress API is running 🚀', version: 'notif-admin', time: new Date() });
 });
 
 // ─── 404 handler ─────────────────────────────────────────

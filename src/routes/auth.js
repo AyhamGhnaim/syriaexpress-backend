@@ -54,7 +54,7 @@ router.post('/register', async (req, res) => {
 
     // ── إنشاء ذرّي: user + seller + verification في معاملة واحدة ──
     const client = await db.connect();
-    let user;
+    let user, newSellerId = null;
     try {
       await client.query('BEGIN');
 
@@ -81,6 +81,7 @@ router.post('/register', async (req, res) => {
           `INSERT INTO verification_requests (seller_id) VALUES ($1)`,
           [sellerResult.rows[0].id]
         );
+        newSellerId = sellerResult.rows[0].id;
       }
 
       await client.query('COMMIT');
@@ -89,6 +90,25 @@ router.post('/register', async (req, res) => {
       throw txErr;
     } finally {
       client.release();
+    }
+
+    // إشعار الأدمن: طلب توثيق جديد بانتظار المراجعة (مجمّع — نداء واحد غير مقروء لكل أدمن).
+    // خارج المعاملة — فشله يجب ألا يؤثر على إنشاء الحساب.
+    if (user_type === 'seller' && newSellerId) {
+      try {
+        await db.query(
+          `INSERT INTO notifications (user_id, type, title_ar, body_ar, ref_type, ref_id)
+           SELECT u.id, 'verification_pending', 'طلبات توثيق بانتظار المراجعة',
+                  'هناك بائع جديد بانتظار توثيق حسابه — افتح مراجعة التوثيق', 'admin_verifications', $1
+           FROM users u
+           WHERE u.user_type = 'admin'
+             AND NOT EXISTS (
+               SELECT 1 FROM notifications n
+               WHERE n.user_id = u.id AND n.type = 'verification_pending' AND n.is_read IS NOT TRUE
+             )`,
+          [newSellerId]
+        );
+      } catch (e) { console.error('admin verification_pending notify failed:', e.message); }
     }
 
     // Generate token
