@@ -248,12 +248,26 @@ router.get('/analytics', async (req, res) => {
                 GROUP BY month ORDER BY month`)
     ]);
 
+    // عمولة المنصّة التقديرية (تقرير فقط) — على الطلبات المسلّمة.
+    // لا تمسّ تدفّق الطلب ولا المال؛ مجرّد رقم للوحة الأدمن. معزولة بـ try
+    // كي لا تكسر التحليلات إن فشلت.
+    let commission = { rate: 0, delivered_gmv: 0, estimated: 0 };
+    try {
+      const rate = await settings.getNumber('commission_rate', 0);
+      const g = await db.query(
+        "SELECT COALESCE(SUM(total_amount),0) AS gmv FROM orders WHERE status='delivered'"
+      );
+      const dgmv = parseFloat(g.rows[0].gmv) || 0;
+      commission = { rate, delivered_gmv: dgmv, estimated: Math.round(dgmv * rate / 100) };
+    } catch (_) { /* تقرير اختياري */ }
+
     res.json({
       byStatus:    ordersByStatus.rows,
       byGov:       ordersByGov.rows,
       byShipping:  ordersByShipping.rows,
       topSellers:  topSellers.rows,
-      monthly:     monthlyOrders.rows
+      monthly:     monthlyOrders.rows,
+      commission
     });
   } catch (err) {
     res.status(500).json({ error: 'خطأ في الخادم' });

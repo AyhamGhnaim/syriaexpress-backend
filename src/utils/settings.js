@@ -39,11 +39,17 @@ async function getBool(key, fallback = false) {
   return fallback;
 }
 
-// قراءة عددية: تقبل number أو نصاً رقمياً. غير ذلك → fallback.
+// قراءة عددية متينة: تقبل number، أو نصاً يحوي رقماً ("7"، "7%"، حتى "\"7%\"").
+// تستخرج أول رقم. غير ذلك → fallback.
 async function getNumber(key, fallback = 0) {
   const all = await getAll();
-  const n = parseFloat(all[key]);
-  return Number.isFinite(n) ? n : fallback;
+  const raw = all[key];
+  if (typeof raw === 'number') return Number.isFinite(raw) ? raw : fallback;
+  if (typeof raw === 'string') {
+    const m = raw.match(/-?\d+(\.\d+)?/);
+    if (m) return parseFloat(m[0]);
+  }
+  return fallback;
 }
 
 // تفريغ الكاش — يُستدعى بعد تحديث إعداد ليصبح أثره فورياً.
