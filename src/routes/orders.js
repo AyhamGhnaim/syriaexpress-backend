@@ -257,6 +257,7 @@ router.get('/reorder-suggestions', auth(['buyer']), async (req, res) => {
        JOIN products p ON o.product_id = p.id
        JOIN sellers  s ON o.seller_id  = s.id
        WHERE o.buyer_id = $1 AND o.status <> 'cancelled' AND p.approval_status = 'approved'
+         AND NOT EXISTS (SELECT 1 FROM categories c WHERE c.id = p.category_id AND c.status = 'inactive')
        ORDER BY o.product_id, o.created_at ASC`,
       [req.user.id]
     );
@@ -271,7 +272,8 @@ router.get('/reorder-suggestions', auth(['buyer']), async (req, res) => {
        JOIN v_products_full v ON v.id = sp.product_id
        LEFT JOIN products p ON p.id = v.id
        LEFT JOIN sellers  s ON s.id = v.seller_id
-       WHERE sp.user_id = $1 AND p.approval_status = 'approved'`,
+       WHERE sp.user_id = $1 AND p.approval_status = 'approved'
+         AND NOT EXISTS (SELECT 1 FROM categories c WHERE c.id = p.category_id AND c.status = 'inactive')`,
       [req.user.id]
     );
 

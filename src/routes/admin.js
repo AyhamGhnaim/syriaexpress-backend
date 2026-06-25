@@ -379,16 +379,30 @@ router.post('/categories', async (req, res) => {
   }
 });
 
-// DELETE /api/admin/categories/:id — حذف فئة
+// DELETE /api/admin/categories/:id — حذف فئة (ممنوع إن وُجدت منتجات مرتبطة)
 router.delete('/categories/:id', async (req, res) => {
   try {
-    await db.query('DELETE FROM categories WHERE id = $1', [req.params.id]);
+    // فحص صريح: لا نحذف فئة تحتوي على منتجات (أي حالة اعتماد/حياة) — دفاعي بلا اعتماد على الـ FK
+    const used = await db.query(
+      'SELECT COUNT(*)::int AS cnt FROM products WHERE category_id = $1',
+      [req.params.id]
+    );
+    const cnt = used.rows[0].cnt;
+    if (cnt > 0) {
+      return res.status(409).json({
+        error: `لا يمكن حذف الفئة لأنها تحتوي على ${cnt} منتج. يمكنك تحويلها إلى "غير نشطة" بدلاً من حذفها.`,
+        code: 'CATEGORY_HAS_PRODUCTS',
+        product_count: cnt
+      });
+    }
+
+    const del = await db.query('DELETE FROM categories WHERE id = $1', [req.params.id]);
+    if (del.rowCount === 0)
+      return res.status(404).json({ error: 'الفئة غير موجودة' });
+
     res.json({ message: 'تم حذف الفئة' });
   } catch (err) {
-    // إذا فيه منتجات مرتبطة، غيّر الحالة بدل الحذف
-    await db.query("UPDATE categories SET status='inactive' WHERE id=$1", [req.params.id])
-      .catch(() => {});
-    res.json({ message: 'تم إخفاء الفئة (تحتوي على منتجات)' });
+    res.status(500).json({ error: 'خطأ في الخادم' });
   }
 });
 // GET /api/admin/sellers/:id/documents

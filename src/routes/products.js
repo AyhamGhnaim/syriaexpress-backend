@@ -67,6 +67,8 @@ router.get('/', async (req, res) => {
 
     // بوابة الاعتماد: المشترون يرون المنتجات المعتمدة فقط
     where.push("p.approval_status = 'approved'");
+    // بوابة الفئة: إخفاء منتجات الفئات غير النشطة (NULL/فئة غير موجودة = تُعرض)
+    where.push("NOT EXISTS (SELECT 1 FROM categories c WHERE c.id = p.category_id AND c.status = 'inactive')");
 
     const whereClause = where.length > 0 ? 'WHERE ' + where.join(' AND ') : '';
 
@@ -133,6 +135,7 @@ router.get('/:id', async (req, res) => {
     // إذا كان البائع يطلب منتجه، نسمح بأي حالة غير archived
     let statusCondition = `p.status = 'active'`;
     let approvalCondition = `AND p.approval_status = 'approved'`;
+    let categoryCondition = `AND c.status != 'inactive'`;  // إخفاء منتجات الفئات غير النشطة عن المشتري
     let token = req.headers.authorization?.split(' ')[1];
     if (token) {
       try {
@@ -141,6 +144,7 @@ router.get('/:id', async (req, res) => {
         if (decoded.user_type === 'seller' || decoded.user_type === 'admin') {
           statusCondition = `p.status != 'archived'`;
           approvalCondition = '';  // البائع/الأدمن يعاينان أي حالة اعتماد
+          categoryCondition = '';  // ويعاينان منتجهم حتى لو فئته غير نشطة
         }
       } catch(e) {}
     }
@@ -160,7 +164,7 @@ router.get('/:id', async (req, res) => {
        JOIN sellers s ON p.seller_id = s.id
        JOIN categories c ON p.category_id = c.id
        JOIN users u ON s.user_id = u.id
-       WHERE p.id = $1 AND ${statusCondition} ${approvalCondition}`,
+       WHERE p.id = $1 AND ${statusCondition} ${approvalCondition} ${categoryCondition}`,
       [req.params.id]
     );
 

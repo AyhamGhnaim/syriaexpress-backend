@@ -193,7 +193,12 @@ router.post('/me/logo', auth(['seller']), upload.single('logo'), async (req, res
 router.get('/:id/products', async (req, res) => {
   try {
     const result = await db.query(
-      'SELECT * FROM v_products_full WHERE seller_id = $1 ORDER BY created_at DESC',
+      `SELECT v.* FROM v_products_full v
+       LEFT JOIN products p ON p.id = v.id
+       WHERE v.seller_id = $1
+         AND p.approval_status = 'approved'
+         AND NOT EXISTS (SELECT 1 FROM categories c WHERE c.id = p.category_id AND c.status = 'inactive')
+       ORDER BY v.created_at DESC`,
       [req.params.id]
     );
     res.json(result.rows);
@@ -216,7 +221,12 @@ router.get('/:id', async (req, res) => {
     if (!seller.rows.length) return res.status(404).json({ error: 'البائع غير موجود' });
 
     const products = await db.query(
-      'SELECT * FROM v_products_full WHERE seller_id = $1 LIMIT 10',
+      `SELECT v.* FROM v_products_full v
+       LEFT JOIN products p ON p.id = v.id
+       WHERE v.seller_id = $1
+         AND p.approval_status = 'approved'
+         AND NOT EXISTS (SELECT 1 FROM categories c WHERE c.id = p.category_id AND c.status = 'inactive')
+       LIMIT 10`,
       [req.params.id]
     );
 
