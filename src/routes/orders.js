@@ -38,13 +38,21 @@ router.post('/', auth(['buyer']), async (req, res) => {
   try {
     // Get product & seller
     const product = await db.query(
-      `SELECT p.*, s.id as seller_id, s.governorate as seller_governorate
+      `SELECT p.*, s.id as seller_id, s.governorate as seller_governorate,
+              EXISTS(SELECT 1 FROM categories c WHERE c.id = p.category_id AND c.status = 'inactive') AS category_inactive
        FROM products p JOIN sellers s ON p.seller_id = s.id WHERE p.id = $1`,
       [product_id]
     );
     if (!product.rows.length) return res.status(404).json({ error: 'المنتج غير موجود' });
 
     const p = product.rows[0];
+
+    // تحقّق التوفّر (المصدر الموثوق عند الطلب): المنتج معتمد وفئته نشطة
+    if (p.approval_status !== 'approved')
+      return res.status(400).json({ error: 'هذا المنتج غير متاح للطلب حالياً' });
+    if (p.category_inactive)
+      return res.status(400).json({ error: 'هذا المنتج غير متاح حالياً (تم تعطيل فئته)' });
+
     if (quantity < p.min_order_quantity)
       return res.status(400).json({ error: `الحد الأدنى للطلب هو ${p.min_order_quantity} ${p.unit}` });
 
