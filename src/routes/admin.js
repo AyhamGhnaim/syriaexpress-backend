@@ -230,6 +230,65 @@ router.patch('/users/:id/status', async (req, res) => {
   }
 });
 
+// ─── Delete user (hard delete + cascade) ─────────────────
+// DELETE /api/admin/users/:id
+// حذف نهائي ذرّي مع تنظيف كل التبعيات (مطابق منطق DELETE /me + تقوية فرع البائع).
+// غير قابل للتراجع. للحذف غير المدمّر استخدم PATCH /users/:id/status (توقيف).
+router.delete('/users/:id', async (req, res) => {
+  const targetId = req.params.id;
+  if (targetId === req.user.id)
+    return res.status(400).json({ error: 'لا يمكنك حذف حسابك الخاص' });
+
+  const client = await db.connect();
+  try {
+    const u = await client.query('SELECT user_type FROM users WHERE id = $1', [targetId]);
+    if (!u.rows.length) {
+      return res.status(404).json({ error: 'المستخدم غير موجود' });
+    }
+    const targetType = u.rows[0].user_type;
+
+    await client.query('BEGIN');
+
+    // إن كان بائعاً: نظّف بياناته ومنتجاته أولاً
+    const sellerRes = await client.query('SELECT id FROM sellers WHERE user_id = $1', [targetId]);
+    const sellerId = sellerRes.rows[0]?.id;
+    if (sellerId) {
+      await client.query('DELETE FROM product_images WHERE product_id IN (SELECT id FROM products WHERE seller_id = $1)', [sellerId]);
+      await client.query('DELETE FROM saved_products WHERE product_id IN (SELECT id FROM products WHERE seller_id = $1)', [sellerId]);
+      await client.query('DELETE FROM reviews WHERE product_id IN (SELECT id FROM products WHERE seller_id = $1)', [sellerId]);
+      await client.query('DELETE FROM cart_items WHERE product_id IN (SELECT id FROM products WHERE seller_id = $1)', [sellerId]);
+      await client.query('DELETE FROM price_tiers WHERE product_id IN (SELECT id FROM products WHERE seller_id = $1)', [sellerId]);
+      await client.query('DELETE FROM products WHERE seller_id = $1', [sellerId]);
+      await client.query('DELETE FROM coupons WHERE seller_id = $1', [sellerId]);
+      await client.query('DELETE FROM seller_documents WHERE seller_id = $1', [sellerId]);
+      await client.query('DELETE FROM verification_requests WHERE seller_id = $1', [sellerId]);
+      await client.query('DELETE FROM orders WHERE seller_id = $1', [sellerId]);
+      await client.query('DELETE FROM sellers WHERE id = $1', [sellerId]);
+    }
+
+    // بيانات المستخدم (مشترٍ) — reviews قبل orders لتفادي FK
+    await client.query('DELETE FROM cart_items WHERE user_id = $1', [targetId]);
+    await client.query('DELETE FROM saved_products WHERE user_id = $1', [targetId]);
+    await client.query('DELETE FROM reviews WHERE user_id = $1', [targetId]);
+    await client.query('DELETE FROM notifications WHERE user_id = $1', [targetId]);
+    await client.query('DELETE FROM orders WHERE buyer_id = $1', [targetId]);
+    await client.query('DELETE FROM audit_log WHERE user_id = $1', [targetId]);
+
+    // حذف المستخدم نهائياً (buyer_addresses تُحذف تلقائياً عبر ON DELETE CASCADE)
+    await client.query('DELETE FROM users WHERE id = $1', [targetId]);
+
+    await client.query('COMMIT');
+    await logAudit(req.user.id, 'user_delete', 'user', targetId, { user_type: targetType });
+    res.json({ message: 'تم حذف المستخدم نهائياً' });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Admin delete user error:', err);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  } finally {
+    client.release();
+  }
+});
+
 // ─── Analytics ───────────────────────────────────────────
 router.get('/analytics', async (req, res) => {
   try {
