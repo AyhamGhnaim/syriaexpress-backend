@@ -228,12 +228,26 @@ router.get('/seller', auth(['seller']), async (req, res) => {
     let where = 'WHERE o.seller_id = $1';
     if (status) { params.push(status); where += ` AND o.status = $${params.length}`; }
 
+    // حدود SLA لتعليم الطلبات المتأخّرة (مطابق لمنطق الأدمن — fail-open على الافتراضي)
+    const rHours = await settings.getNumber('sla_max_response_hours', 6);
+    const sHours = await settings.getNumber('sla_max_shipping_hours', 48);
+    const rIdx = params.push(rHours);   // فهرس حدّ الردّ
+    const sIdx = params.push(sHours);   // فهرس حدّ الشحن
+
     params.push(limit, (page-1)*limit);
     const result = await db.query(
       `SELECT o.*, p.name_ar, p.unit, p.price,
               u.name as buyer_name, u.phone as buyer_phone, u.governorate as buyer_gov,
               COALESCE((SELECT image_url FROM product_images WHERE product_id = p.id AND is_primary=true LIMIT 1), p.image_url) as product_image,
-              (o.quantity * COALESCE(o.unit_price, p.price) - COALESCE(o.discount,0) + o.shipping_price) as total_amount
+              (o.quantity * COALESCE(o.unit_price, p.price) - COALESCE(o.discount,0) + o.shipping_price) as total_amount,
+              (CASE
+                 WHEN o.status='pending'   AND o.created_at   + make_interval(hours => $${rIdx}) < NOW() THEN true
+                 WHEN o.status='confirmed' AND o.confirmed_at + make_interval(hours => $${sIdx}) < NOW() THEN true
+                 ELSE false END) as sla_overdue,
+              (CASE
+                 WHEN o.status='pending'   AND o.created_at   + make_interval(hours => $${rIdx}) < NOW() THEN 'response'
+                 WHEN o.status='confirmed' AND o.confirmed_at + make_interval(hours => $${sIdx}) < NOW() THEN 'shipping'
+                 ELSE NULL END) as sla_kind
        FROM orders o
        JOIN products p ON o.product_id = p.id
        JOIN users u    ON o.buyer_id   = u.id

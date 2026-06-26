@@ -63,6 +63,20 @@ router.get('/overview', async (req, res) => {
       pendingProducts = parseInt(pp.rows[0].count) || 0;
     } catch(e) {}
 
+    // عدّاد الطلبات المتجاوزة لحدود SLA (دفاعي — مطابق حرفياً لشرط /performance)
+    let slaBreaches = 0;
+    try {
+      const rHours = await settings.getNumber('sla_max_response_hours', 6);
+      const sHours = await settings.getNumber('sla_max_shipping_hours', 48);
+      const sb = await db.query(
+        `SELECT COUNT(*) FROM orders o
+         WHERE (o.status = 'pending'   AND o.created_at   + make_interval(hours => $1) < NOW())
+            OR (o.status = 'confirmed' AND o.confirmed_at + make_interval(hours => $2) < NOW())`,
+        [rHours, sHours]
+      );
+      slaBreaches = parseInt(sb.rows[0].count) || 0;
+    } catch(e) {}
+
     const recentOrders = await db.query(
       `SELECT o.id, o.status, o.quantity, o.created_at,
               p.name_ar, s.company_name_ar, u.name as buyer_name
@@ -82,6 +96,7 @@ router.get('/overview', async (req, res) => {
         total_orders:     parseInt(orders.rows[0].count),
         pending_verif:    parseInt(pending.rows[0].count),
         pending_products: pendingProducts,
+        sla_breaches:     slaBreaches,
         total_revenue:    gmv,
         delivered_orders: delivered,
         active_orders:    active,
