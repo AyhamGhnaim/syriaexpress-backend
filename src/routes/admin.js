@@ -266,15 +266,17 @@ router.delete('/users/:id', async (req, res) => {
       await client.query('DELETE FROM sellers WHERE id = $1', [sellerId]);
     }
 
-    // بيانات المستخدم (مشترٍ) — reviews قبل orders لتفادي FK
-    await client.query('DELETE FROM cart_items WHERE user_id = $1', [targetId]);
+    // بيانات المستخدم (مشترٍ) — أعمدة المرجع: cart_items/reviews=buyer_id، الباقي=user_id
+    // reviews تُحذف قبل orders لتفادي FK (reviews.order_id)
+    await client.query('DELETE FROM cart_items WHERE buyer_id = $1', [targetId]);
     await client.query('DELETE FROM saved_products WHERE user_id = $1', [targetId]);
-    await client.query('DELETE FROM reviews WHERE user_id = $1', [targetId]);
+    await client.query('DELETE FROM reviews WHERE buyer_id = $1', [targetId]);
     await client.query('DELETE FROM notifications WHERE user_id = $1', [targetId]);
     await client.query('DELETE FROM orders WHERE buyer_id = $1', [targetId]);
+    await client.query('DELETE FROM buyer_addresses WHERE user_id = $1', [targetId]);
     await client.query('DELETE FROM audit_log WHERE user_id = $1', [targetId]);
 
-    // حذف المستخدم نهائياً (buyer_addresses تُحذف تلقائياً عبر ON DELETE CASCADE)
+    // حذف المستخدم نهائياً
     await client.query('DELETE FROM users WHERE id = $1', [targetId]);
 
     await client.query('COMMIT');
