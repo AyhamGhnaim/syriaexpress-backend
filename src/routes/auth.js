@@ -27,8 +27,8 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ error: 'رقم الهاتف غير صالح' });
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
       return res.status(400).json({ error: 'البريد الإلكتروني غير صالح' });
-    if (!password || password.length < 6)
-      return res.status(400).json({ error: 'كلمة المرور يجب أن تكون 6 أحرف على الأقل' });
+    if (!password || password.length < 8)
+      return res.status(400).json({ error: 'كلمة المرور يجب أن تكون 8 أحرف على الأقل' });
 
     // البائعون يجب أن يكونوا داخل سوريا
     if (user_type === 'seller' && governorate === 'خارج سوريا') {
@@ -253,8 +253,8 @@ router.put('/change-password', auth(), async (req, res) => {
       return res.status(400).json({ error: 'يرجى إدخال كلمة المرور الحالية والجديدة' });
     }
 
-    if (new_password.length < 6) {
-      return res.status(400).json({ error: 'كلمة المرور الجديدة يجب أن تكون 6 أحرف على الأقل' });
+    if (new_password.length < 8) {
+      return res.status(400).json({ error: 'كلمة المرور الجديدة يجب أن تكون 8 أحرف على الأقل' });
     }
 
     // جلب كلمة المرور الحالية من الداتابيز
@@ -292,7 +292,12 @@ router.put('/change-password', auth(), async (req, res) => {
 // POST /api/auth/avatar
 const cloudinary = require('../config/cloudinary');
 const multer = require('multer');
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  // صور فقط؛ نوع مرفوض → req.file غائب → 400 القائم
+  fileFilter: (req, file, cb) => cb(null, /^image\//.test(file.mimetype || ''))
+});
 
 router.post('/avatar', auth(), upload.single('avatar'), async (req, res) => {
   try {

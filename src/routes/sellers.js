@@ -107,9 +107,19 @@ router.put('/me', auth(['seller']), async (req, res) => {
 // POST /api/sellers/documents — upload seller document
 const multer = require('multer');
 const cloudinary = require('../config/cloudinary');
-const upload = multer({ storage: multer.memoryStorage() });
+// نوع مرفوض → cb(null,false) → req.file غائب → 400 القائم بالـ route (لا مسار خطأ جديد)
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => cb(null, /^image\//.test(file.mimetype || ''))
+}); // logo / banner: صور فقط
+const uploadDoc = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => cb(null, /^image\//.test(file.mimetype || '') || file.mimetype === 'application/pdf')
+}); // وثائق التوثيق: صور أو PDF
 
-router.post('/documents', auth(['seller']), upload.single('document'), async (req, res) => {
+router.post('/documents', auth(['seller']), uploadDoc.single('document'), async (req, res) => {
   try {
     const seller = await db.query('SELECT id FROM sellers WHERE user_id = $1', [req.user.id]);
     if (!seller.rows.length) return res.status(403).json({ error: 'غير مصرح' });

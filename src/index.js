@@ -1,13 +1,27 @@
 require('dotenv').config();
 const express    = require('express');
 const cors       = require('cors');
+const helmet     = require('helmet');
 const rateLimit  = require('express-rate-limit');
 
 const app = express();app.set('trust proxy', 1);
 
 // ─── Middleware ───────────────────────────────────────────
+// helmet: security headers (X-Content-Type-Options, HSTS, frameguard...) — آمن لـ API يخدم JSON فقط
+app.use(helmet());
+
+// CORS مقيّد: نطاقات الواجهة المعروفة فقط.
+// الطلبات بلا Origin (curl / keep-alive / server-to-server) تمرّ — لا تُرسَل لها headers أصلاً.
+const ALLOWED_ORIGINS = [
+  'https://syriaexpressapp.com',
+  'https://www.syriaexpressapp.com',
+  'https://ayhamghnaim.github.io'   // GitHub Pages المباشر (تحقّق سريع بتجاوز Cloudflare)
+];
 app.use(cors({
-  origin: function(origin, callback) { callback(null, true); },
+  origin: function(origin, callback) {
+    if (!origin || ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+    return callback(null, false); // غير مسموح: بلا CORS headers (المتصفح يحجب) — لا 500
+  },
   credentials: true,
   methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
   allowedHeaders: ['Content-Type','Authorization']
@@ -96,7 +110,6 @@ app.use('/api/auth',          require('./routes/auth'));
 app.use('/api/products',      require('./routes/products'));
 app.use('/api/orders',        require('./routes/orders'));
 app.use('/api/sellers',       require('./routes/sellers'));
-app.use('/api/cart',          require('./routes/cart'));
 app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/admin',         require('./routes/admin'));
 app.use('/api/reviews',       require('./routes/reviews'));
@@ -123,7 +136,7 @@ app.get('/api/categories', async (req, res) => {
 // ─── Health check ─────────────────────────────────────────
 app.get('/api/health', (req, res) => {
   // version = علامة نشر: تتغيّر مع كل دفعة لتأكيد أن Render خدم آخر كود (آخرها: إشعارات الأدمن)
-  res.json({ status: 'ok', message: 'SyriaExpress API is running 🚀', version: 'sla-overdue-signal', time: new Date() });
+  res.json({ status: 'ok', message: 'SyriaExpress API is running 🚀', version: 'security-hardening', time: new Date() });
 });
 
 // ─── 404 handler ─────────────────────────────────────────

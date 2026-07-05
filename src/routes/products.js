@@ -5,7 +5,9 @@ const auth    = require('../middleware/auth');
 const multer = require('multer');
 const cloudinary = require('../config/cloudinary');
 const storage = multer.memoryStorage();
-const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } });
+// صور فقط؛ نوع مرفوض → cb(null,false) → req.file غائب → الـ route يرجّع 400 القائم (لا مسار خطأ جديد)
+const imageOnly = (req, file, cb) => cb(null, /^image\//.test(file.mimetype || ''));
+const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 }, fileFilter: imageOnly });
 // ─── GET all active products ─────────────────────────────
 router.get('/', async (req, res) => {
   try {
