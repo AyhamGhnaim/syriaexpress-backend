@@ -63,6 +63,13 @@ router.get('/overview', async (req, res) => {
       pendingProducts = parseInt(pp.rows[0].count) || 0;
     } catch(e) {}
 
+    // عدّاد المستخدمين الجدد (آخر 7 أيام) — دفاعي؛ مطابق لفلتر «جدد» بصفحة إدارة المستخدمين
+    let newUsers = 0;
+    try {
+      const nu = await db.query("SELECT COUNT(*) FROM users WHERE created_at >= NOW() - INTERVAL '7 days'");
+      newUsers = parseInt(nu.rows[0].count) || 0;
+    } catch(e) {}
+
     // عدّاد الطلبات المتجاوزة لحدود SLA (دفاعي — مطابق حرفياً لشرط /performance)
     let slaBreaches = 0;
     try {
@@ -96,6 +103,7 @@ router.get('/overview', async (req, res) => {
         total_orders:     parseInt(orders.rows[0].count),
         pending_verif:    parseInt(pending.rows[0].count),
         pending_products: pendingProducts,
+        new_users:        newUsers,
         sla_breaches:     slaBreaches,
         total_revenue:    gmv,
         delivered_orders: delivered,

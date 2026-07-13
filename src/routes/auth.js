@@ -142,6 +142,25 @@ router.post('/register', async (req, res) => {
       } catch (e) { console.error('admin verification_pending notify failed:', e.message); }
     }
 
+    // إشعار الأدمن: مستخدم جديد (مشترٍ) — مجمّع بنفس نمط verification_pending.
+    // البائع مغطّى أصلاً بـ verification_pending أعلاه، فلا نكرّر عليه.
+    if (user_type === 'buyer') {
+      try {
+        await db.query(
+          `INSERT INTO notifications (user_id, type, title_ar, body_ar, ref_type, ref_id)
+           SELECT u.id, 'user_new', 'مستخدمون جدد',
+                  'انضمّ مستخدمون جدد للمنصّة — افتح إدارة المستخدمين', 'admin_users', $1
+           FROM users u
+           WHERE u.user_type = 'admin'
+             AND NOT EXISTS (
+               SELECT 1 FROM notifications n
+               WHERE n.user_id = u.id AND n.type = 'user_new' AND n.is_read IS NOT TRUE
+             )`,
+          [user.id]
+        );
+      } catch (e) { console.error('admin user_new notify failed:', e.message); }
+    }
+
     // Generate token
     const token = jwt.sign(
       { id: user.id, email: user.email, user_type: user.user_type, governorate: user.governorate },
