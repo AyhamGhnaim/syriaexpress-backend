@@ -52,6 +52,30 @@ router.patch('/:id', auth(['seller']), async (req, res) => {
     const sid = await sellerIdOf(req.user.id);
     if (!sid) return res.status(403).json({ error: 'غير مصرح' });
     const fields = ['active', 'value', 'min_total', 'expires_at', 'discount_type'];
+
+    // تحقّق مطابق لـ POST — كان PATCH يقبل أي discount_type، وأي قيمة غير 'percent'
+    // تُعامَل عند الطلب كخصم ثابت.
+    const dt = req.body.discount_type;
+    if (dt !== undefined && !['percent', 'fixed'].includes(dt))
+      return res.status(400).json({ error: 'نوع الخصم غير صحيح' });
+
+    if (req.body.value !== undefined) {
+      const v = parseFloat(req.body.value);
+      if (!(v > 0)) return res.status(400).json({ error: 'قيمة الخصم يجب أن تكون أكبر من صفر' });
+      // النوع الفعّال بعد التعديل: الوارد إن وُجد، وإلا النوع الحالي للكوبون
+      // (وإلا تمرّ نسبة 150% عند إرسال value وحدها على كوبون percent).
+      let effType = dt;
+      if (effType === undefined) {
+        const cur = await db.query(
+          'SELECT discount_type FROM coupons WHERE id = $1 AND seller_id = $2', [req.params.id, sid]
+        );
+        if (!cur.rows.length) return res.status(404).json({ error: 'الكوبون غير موجود' });
+        effType = cur.rows[0].discount_type;
+      }
+      if (effType === 'percent' && v > 100)
+        return res.status(400).json({ error: 'نسبة الخصم لا تتجاوز 100%' });
+    }
+
     const updates = [], values = [];
     fields.forEach(f => {
       if (req.body[f] !== undefined) { values.push(req.body[f] === '' ? null : req.body[f]); updates.push(`${f} = $${values.length}`); }

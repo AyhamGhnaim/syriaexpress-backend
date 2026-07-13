@@ -30,6 +30,14 @@ router.post('/register', async (req, res) => {
     if (!password || password.length < 8)
       return res.status(400).json({ error: 'كلمة المرور يجب أن تكون 8 أحرف على الأقل' });
 
+    // قائمة بيضاء لنوع الحساب — التسجيل الذاتي للمشتري/البائع فقط.
+    // (القاعدة تحمي أصلاً عبر users_user_type_check؛ هذا تحقّق خادمي مبكّر برسالة واضحة
+    //  بدل خطأ 23514 خام. غياب القيمة يبقى كما هو → 'buyer' عند الإدراج.)
+    if (user_type !== undefined && user_type !== null && user_type !== '' &&
+        !['buyer', 'seller'].includes(user_type)) {
+      return res.status(400).json({ error: 'نوع الحساب غير صالح' });
+    }
+
     // البائعون يجب أن يكونوا داخل سوريا
     if (user_type === 'seller' && governorate === 'خارج سوريا') {
       return res.status(400).json({ error: 'البائعون يجب أن يكونوا داخل سوريا' });
