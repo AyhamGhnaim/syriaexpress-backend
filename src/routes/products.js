@@ -228,8 +228,21 @@ router.post('/', auth(['seller']), async (req, res) => {
       ? outside_governorates.filter(g => typeof g === 'string' && g.trim()).map(g => g.trim())
       : [];
 
+    // ── تحقّق القيم المالية: لا أسعار سالبة (كان parseFloat(price)||0 يمرّر السالب) ──
+    if (price !== undefined && price !== null && price !== '' && parseFloat(price) < 0)
+      return res.status(400).json({ error: 'السعر لا يمكن أن يكون سالباً' });
+    for (const [sp, label] of [[ship_price_inside,'الداخلي'],[ship_price_outside,'الخارجي'],[ship_price_intl,'الدولي']]) {
+      if (sp !== undefined && sp !== null && sp !== '' && parseFloat(sp) < 0)
+        return res.status(400).json({ error: `سعر الشحن ${label} لا يمكن أن يكون سالباً` });
+    }
+    if (min_order_quantity !== undefined && min_order_quantity !== null && min_order_quantity !== '' &&
+        (!Number.isInteger(Number(min_order_quantity)) || Number(min_order_quantity) < 1))
+      return res.status(400).json({ error: 'الحد الأدنى للطلب يجب أن يكون عدداً صحيحاً موجباً' });
+
     const sQty = (stock_qty === '' || stock_qty === undefined || stock_qty === null) ? null : parseInt(stock_qty);
     const lowT = (low_stock_threshold === '' || low_stock_threshold === undefined || low_stock_threshold === null) ? null : parseInt(low_stock_threshold);
+    if (sQty !== null && (isNaN(sQty) || sQty < 0))
+      return res.status(400).json({ error: 'قيمة المخزون غير صحيحة' });
     const inStock = sQty === null ? true : sQty > 0;
 
     const result = await db.query(
@@ -299,6 +312,20 @@ router.put('/:id', auth(['seller']), async (req, res) => {
                     'min_order_quantity','unit','price','ship_inside','ship_outside',
                     'ship_international','ship_price_inside','ship_price_outside',
                     'ship_price_intl','status','category_id','outside_governorates'];
+
+    // ── تحقّق القيم المالية على الحقول الواردة (مطابق لـ POST) ──
+    for (const pf of ['price','ship_price_inside','ship_price_outside','ship_price_intl']) {
+      const v = req.body[pf];
+      if (v !== undefined && v !== null && v !== '' && parseFloat(v) < 0)
+        return res.status(400).json({ error: 'الأسعار لا يمكن أن تكون سالبة' });
+    }
+    if (req.body.min_order_quantity !== undefined && req.body.min_order_quantity !== null && req.body.min_order_quantity !== '' &&
+        (!Number.isInteger(Number(req.body.min_order_quantity)) || Number(req.body.min_order_quantity) < 1))
+      return res.status(400).json({ error: 'الحد الأدنى للطلب يجب أن يكون عدداً صحيحاً موجباً' });
+    if (req.body.stock_qty !== undefined && req.body.stock_qty !== '' && req.body.stock_qty !== null) {
+      const sq = parseInt(req.body.stock_qty);
+      if (isNaN(sq) || sq < 0) return res.status(400).json({ error: 'قيمة المخزون غير صحيحة' });
+    }
 
     const updates = [];
     const values  = [];

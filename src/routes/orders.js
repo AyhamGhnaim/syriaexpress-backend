@@ -53,13 +53,18 @@ router.post('/', auth(['buyer']), async (req, res) => {
     if (p.category_inactive)
       return res.status(400).json({ error: 'هذا المنتج غير متاح حالياً (تم تعطيل فئته)' });
 
-    if (quantity < p.min_order_quantity)
+    // تحقّق الكمية: عدد صحيح موجب فقط (NaN/الكسور/السالب/الصفر ترفض)
+    const qty = Number(quantity);
+    if (!Number.isInteger(qty) || qty <= 0)
+      return res.status(400).json({ error: 'الكمية غير صحيحة' });
+
+    if (qty < p.min_order_quantity)
       return res.status(400).json({ error: `الحد الأدنى للطلب هو ${p.min_order_quantity} ${p.unit}` });
 
     // تحقق المخزون (المنتج بمخزون محدود)
     if (p.in_stock === false)
       return res.status(400).json({ error: 'هذا المنتج غير متوفر حالياً' });
-    if (p.stock_qty !== null && p.stock_qty !== undefined && quantity > p.stock_qty)
+    if (p.stock_qty !== null && p.stock_qty !== undefined && qty > p.stock_qty)
       return res.status(400).json({ error: `الكمية المتوفرة فقط ${p.stock_qty} ${p.unit}` });
 
     // جلب محافظة المشتري
@@ -120,11 +125,13 @@ router.post('/', auth(['buyer']), async (req, res) => {
       `SELECT unit_price FROM price_tiers
        WHERE product_id = $1 AND min_qty <= $2
        ORDER BY min_qty DESC LIMIT 1`,
-      [product_id, quantity]
+      [product_id, qty]
     );
     if (tier.rows.length) unit_price = parseFloat(tier.rows[0].unit_price);
 
     // كوبون الخصم (يحسبه الخادم على قيمة البضاعة لهذا السطر)
+    // كوبون غير موجود/غير مفعّل/منتهٍ → رفض صريح (لا تجاهل صامت يدفع المشتري السعر الكامل).
+    // عدم بلوغ الحد الأدنى → خصم 0 بلا رفض (مطابق لحساب السلة لكل سطر).
     let discount = 0, appliedCoupon = null;
     if (coupon_code && String(coupon_code).trim()) {
       const cp = await db.query(
@@ -133,47 +140,69 @@ router.post('/', auth(['buyer']), async (req, res) => {
          WHERE seller_id = $1 AND lower(code) = lower($2)`,
         [p.seller_id, String(coupon_code).trim()]
       );
-      if (cp.rows.length) {
-        const c = cp.rows[0];
-        const valid = c.active && (!c.expires_at || new Date(c.expires_at) >= new Date());
-        const goods = quantity * unit_price;
-        if (valid && goods >= (parseFloat(c.min_total) || 0)) {
-          if (c.discount_type === 'percent') discount = Math.round(goods * parseFloat(c.value) / 100);
-          else discount = Math.min(parseFloat(c.value), goods);
-          if (discount > 0) appliedCoupon = c.code;
-        }
+      if (!cp.rows.length)
+        return res.status(400).json({ error: 'الكوبون غير صالح لهذا البائع' });
+      const c = cp.rows[0];
+      if (!c.active)
+        return res.status(400).json({ error: 'هذا الكوبون غير مفعّل' });
+      if (c.expires_at && new Date(c.expires_at) < new Date())
+        return res.status(400).json({ error: 'انتهت صلاحية الكوبون' });
+      const goods = qty * unit_price;
+      if (goods >= (parseFloat(c.min_total) || 0)) {
+        if (c.discount_type === 'percent') discount = Math.round(goods * parseFloat(c.value) / 100);
+        else discount = Math.min(parseFloat(c.value), goods);
+        if (discount > 0) appliedCoupon = c.code;
       }
     }
 
-    const result = await db.query(
-      `INSERT INTO orders (buyer_id, seller_id, product_id, quantity, shipping_type, shipping_address, shipping_price, notes, unit_price, coupon_code, discount, preferred_delivery_date, preferred_delivery_slot)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-       RETURNING *`,
-      [req.user.id, p.seller_id, product_id, quantity, resolved_shipping, shipping_address, shipping_price, notes, unit_price, appliedCoupon, discount, preferred_delivery_date, preferred_delivery_slot]
-    );
+    // معاملة ذرّية: تنقيص المخزون الشرطي + إنشاء الطلب معاً.
+    // التنقيص الشرطي (stock_qty >= qty وقت التنفيذ) هو الحارس الموثوق ضد السباق —
+    // الفحص المبكّر أعلاه للرسالة الودّية فقط. المخزون غير المحدود (NULL) لا يُمسّ.
+    let newOrder;
+    const client = await db.connect();
+    try {
+      await client.query('BEGIN');
 
-    // تنقيص المخزون (إن كان محدوداً) مع حماية من السالب
-    if (p.stock_qty !== null && p.stock_qty !== undefined) {
-      await db.query(
+      const dec = await client.query(
         `UPDATE products
-         SET stock_qty = GREATEST(stock_qty - $1, 0),
-             in_stock  = (GREATEST(stock_qty - $1, 0) > 0)
-         WHERE id = $2`,
-        [quantity, product_id]
+         SET stock_qty = CASE WHEN stock_qty IS NULL THEN NULL ELSE stock_qty - $1 END,
+             in_stock  = CASE WHEN stock_qty IS NULL THEN in_stock ELSE (stock_qty - $1 > 0) END
+         WHERE id = $2 AND (stock_qty IS NULL OR stock_qty >= $1)
+         RETURNING id`,
+        [qty, product_id]
       );
+      if (!dec.rows.length) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'الكمية المطلوبة لم تعد متوفرة' });
+      }
+
+      const result = await client.query(
+        `INSERT INTO orders (buyer_id, seller_id, product_id, quantity, shipping_type, shipping_address, shipping_price, notes, unit_price, coupon_code, discount, preferred_delivery_date, preferred_delivery_slot)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+         RETURNING *`,
+        [req.user.id, p.seller_id, product_id, qty, resolved_shipping, shipping_address, shipping_price, notes, unit_price, appliedCoupon, discount, preferred_delivery_date, preferred_delivery_slot]
+      );
+      newOrder = result.rows[0];
+
+      await client.query('COMMIT');
+    } catch (txErr) {
+      try { await client.query('ROLLBACK'); } catch (_) {}
+      throw txErr;
+    } finally {
+      client.release();
     }
 
-    // Notify seller (الإشعار اختياري — فشله يجب ألا يُفشل الطلب)
+    // Notify seller — بعد COMMIT (الإشعار اختياري — فشله يجب ألا يُفشل الطلب)
     try {
       await db.query(
         `INSERT INTO notifications (user_id, type, title_ar, body_ar, ref_type, ref_id)
          SELECT s.user_id, 'new_order', 'طلب جديد', $1, 'order', $2
          FROM sellers s WHERE s.id = $3`,
-        [`طلب جديد بكمية ${quantity} ${p.unit}`, result.rows[0].id, p.seller_id]
+        [`طلب جديد بكمية ${qty} ${p.unit}`, newOrder.id, p.seller_id]
       );
     } catch (e) { console.error('order notify seller failed:', e.message); }
 
-    res.status(201).json({ message: 'تم إرسال طلبك بنجاح', order: result.rows[0] });
+    res.status(201).json({ message: 'تم إرسال طلبك بنجاح', order: newOrder });
 
   } catch (err) {
     console.error(err);
@@ -420,6 +449,19 @@ router.patch('/:id/status', auth(['seller','admin','buyer']), async (req, res) =
       cancelled: 'cancelled_at'
     }[status];
 
+    // ── State machine: انتقالات صالحة فقط ──
+    // يمنع: الإلغاء المكرّر (استرجاع مخزون مضاعف)، إلغاء المُسلَّم (استرجاع خاطئ)،
+    // والرجوع للخلف (delivered→confirmed يخرّب الطوابع → SLA/الأداء/الإيراد).
+    const allowedFrom = {
+      confirmed: ['pending'],
+      shipped:   ['confirmed'],
+      delivered: ['shipped'],
+      // الإلغاء: البائع قبل الشحن؛ الأدمن حتى بعد الشحن (إشراف) — أبداً بعد التسليم
+      cancelled: req.user.user_type === 'admin'
+        ? ['pending', 'confirmed', 'shipped']
+        : ['pending', 'confirmed']
+    }[status];
+
     let query, params;
 
     if (isBuyer) {
@@ -430,18 +472,19 @@ router.patch('/:id/status', auth(['seller','admin','buyer']), async (req, res) =
     } else if (req.user.user_type === 'seller') {
       // البائع: فقط طلباته — إغلاق IDOR (كان يحدّث أي طلب)
       query = `UPDATE orders SET status = $1, ${timestampField} = NOW(), cancel_reason = $2
-               WHERE id = $3 AND seller_id = (SELECT id FROM sellers WHERE user_id = $4) RETURNING *`;
-      params = [status, cancel_reason || null, req.params.id, req.user.id];
+               WHERE id = $3 AND seller_id = (SELECT id FROM sellers WHERE user_id = $4)
+                 AND status = ANY($5::text[]) RETURNING *`;
+      params = [status, cancel_reason || null, req.params.id, req.user.id, allowedFrom];
     } else {
-      // الأدمن: بلا قيد ملكية
+      // الأدمن: بلا قيد ملكية — لكن ضمن الانتقالات الصالحة
       query = `UPDATE orders SET status = $1, ${timestampField} = NOW(), cancel_reason = $2
-               WHERE id = $3 RETURNING *`;
-      params = [status, cancel_reason || null, req.params.id];
+               WHERE id = $3 AND status = ANY($4::text[]) RETURNING *`;
+      params = [status, cancel_reason || null, req.params.id, allowedFrom];
     }
 
     const result = await db.query(query, params);
 
-    if (!result.rows.length) return res.status(404).json({ error: 'الطلب غير موجود أو لا يمكن إلغاؤه' });
+    if (!result.rows.length) return res.status(404).json({ error: 'الطلب غير موجود أو لا يمكن تغيير حالته من وضعها الحالي' });
 
     const o = result.rows[0];
 

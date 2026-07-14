@@ -31,14 +31,18 @@ router.get('/overview', async (req, res) => {
       db.query("SELECT COUNT(*) FROM verification_requests WHERE status='pending'")
     ]);
 
-    // حساب الإيرادات بشكل آمن
+    // حساب الإيرادات بشكل آمن — GMV من التعبير المالي الموحّد
+    // (عمود total_amount لا يُكتب أبداً؛ الإجمالي محسوب: كمية×السعر المثبّت − الخصم + الشحن)
+    // الطلبات الملغاة مستثناة من GMV.
     let gmv = 0, delivered = 0, active = 0;
     try {
       const rev = await db.query(`SELECT
-        COALESCE(SUM(total_amount),0) as gmv,
-        COUNT(CASE WHEN status='delivered' THEN 1 END) as delivered,
-        COUNT(CASE WHEN status!='cancelled' THEN 1 END) as active
-        FROM orders`);
+        COALESCE(SUM(CASE WHEN o.status != 'cancelled'
+          THEN o.quantity * COALESCE(o.unit_price, p.price, 0) - COALESCE(o.discount,0) + COALESCE(o.shipping_price,0)
+        END),0) as gmv,
+        COUNT(CASE WHEN o.status='delivered' THEN 1 END) as delivered,
+        COUNT(CASE WHEN o.status!='cancelled' THEN 1 END) as active
+        FROM orders o LEFT JOIN products p ON o.product_id = p.id`);
       gmv       = parseFloat(rev.rows[0].gmv)       || 0;
       delivered = parseInt(rev.rows[0].delivered)   || 0;
       active    = parseInt(rev.rows[0].active)      || 0;
@@ -338,8 +342,11 @@ router.get('/analytics', async (req, res) => {
     let commission = { rate: 0, delivered_gmv: 0, estimated: 0 };
     try {
       const rate = await settings.getNumber('commission_rate', 0);
+      // نفس التعبير المالي الموحّد (عمود total_amount لا يُكتب أبداً)
       const g = await db.query(
-        "SELECT COALESCE(SUM(total_amount),0) AS gmv FROM orders WHERE status='delivered'"
+        `SELECT COALESCE(SUM(o.quantity * COALESCE(o.unit_price, p.price, 0) - COALESCE(o.discount,0) + COALESCE(o.shipping_price,0)),0) AS gmv
+         FROM orders o LEFT JOIN products p ON o.product_id = p.id
+         WHERE o.status='delivered'`
       );
       const dgmv = parseFloat(g.rows[0].gmv) || 0;
       commission = { rate, delivered_gmv: dgmv, estimated: Math.round(dgmv * rate / 100) };
@@ -512,7 +519,8 @@ router.get('/orders', async (req, res) => {
               p.price, p.name_ar, p.category_id,
               c.name_ar as category_name_ar,
               s.company_name_ar,
-              (o.quantity * p.price + o.shipping_price) as total_amount
+              o.unit_price, o.discount,
+              (o.quantity * COALESCE(o.unit_price, p.price) - COALESCE(o.discount,0) + o.shipping_price) as total_amount
        FROM orders o
        JOIN products p ON o.product_id = p.id
        JOIN sellers s  ON o.seller_id  = s.id
