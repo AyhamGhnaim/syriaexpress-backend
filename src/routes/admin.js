@@ -215,7 +215,7 @@ router.get('/users', async (req, res) => {
     params.push(limit, (page-1)*limit);
 
     const result = await db.query(
-      `SELECT u.id,u.name,u.email,u.phone,u.user_type,u.governorate,u.is_active,u.created_at,
+      `SELECT u.id,u.name,u.email,u.phone,u.user_type,u.governorate,u.is_active,u.created_at,u.last_login,u.last_seen,
               COALESCE(u.avatar_url, s.logo_url) as avatar_url,
               s.verification_status, s.company_name_ar
        FROM users u

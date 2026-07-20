@@ -236,6 +236,10 @@ router.post('/login', async (req, res) => {
       sellerInfo = s.rows[0] || null;
     }
 
+    // ختم آخر دخول + آخر ظهور — fire-and-forget: لا يؤخّر الرد ولا يكسر الدخول لو فشل
+    db.query('UPDATE users SET last_login = NOW(), last_seen = NOW() WHERE id = $1', [user.id])
+      .catch(e => console.error('last_login stamp failed:', e.message));
+
     res.json({
       message: 'تم تسجيل الدخول بنجاح',
       token,

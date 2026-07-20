@@ -1,6 +1,27 @@
 const jwt = require('jsonwebtoken');
 const db = require('../config/db');
 
+// ─── تتبّع «آخر ظهور» (مكبوح + fire-and-forget) ───────────────────
+// نكتب last_seen مرة كل 5 دقائق كحدّ أقصى لكل مستخدم، خارج المسار الحرج للطلب.
+// الكبح in-memory يوفّر معظم الكتابات؛ لا ينتظر ولا يكسر الطلب لو فشل.
+const SEEN_THROTTLE_MS = 5 * 60 * 1000;
+const lastSeenAt = new Map(); // userId -> آخر كتابة (epoch ms)
+function touchLastSeen(userId) {
+  if (!userId) return;
+  const now = Date.now();
+  const prev = lastSeenAt.get(userId);
+  if (prev && (now - prev) < SEEN_THROTTLE_MS) return; // مكبوح — لا كتابة
+  lastSeenAt.set(userId, now);
+  // ضبط حجم الذاكرة: كنس المداخل المنتهية إن كبر الـ Map
+  if (lastSeenAt.size > 5000) {
+    for (const [k, t] of lastSeenAt) {
+      if ((now - t) > SEEN_THROTTLE_MS) lastSeenAt.delete(k);
+    }
+  }
+  db.query('UPDATE users SET last_seen = NOW() WHERE id = $1', [userId])
+    .catch(() => {}); // fire-and-forget
+}
+
 const auth = (roles = []) => {
   return async (req, res, next) => {
     let decoded;
@@ -32,6 +53,9 @@ const auth = (roles = []) => {
     } catch (dbErr) {
       console.error('auth is_active check failed (fail-open):', dbErr.message);
     }
+
+    // تحديث «آخر ظهور» لمستخدم صالح وفعّال (مكبوح، لا ينتظر)
+    touchLastSeen(decoded.id);
 
     next();
   };

@@ -136,7 +136,7 @@ app.get('/api/categories', async (req, res) => {
 // ─── Health check ─────────────────────────────────────────
 app.get('/api/health', (req, res) => {
   // version = علامة نشر: تتغيّر مع كل دفعة لتأكيد أن Render خدم آخر كود (آخرها: إنفاذ التوقيف بالـ middleware)
-  res.json({ status: 'ok', message: 'SyriaExpress API is running 🚀', version: 'suspend-enforce', time: new Date() });
+  res.json({ status: 'ok', message: 'SyriaExpress API is running 🚀', version: 'last-seen-tracking', time: new Date() });
 });
 
 // ─── 404 handler ─────────────────────────────────────────
